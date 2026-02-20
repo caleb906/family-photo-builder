@@ -1,0 +1,69 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Wedding {
+  id         String   @id @default(cuid())
+  brideName  String
+  groomName  String
+  weddingDate DateTime?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  people     Person[]
+  photoGroups PhotoGroup[]
+}
+
+model Person {
+  id           String   @id @default(cuid())
+  fullName     String
+  side         String   // "Bride" or "Groom"
+  relationship String   // Mom, Dad, Sibling, etc.
+  notes        String?
+  isDivorced   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  weddingId    String
+  wedding      Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  
+  photoGroups  PhotoGroupPerson[]
+}
+
+model PhotoGroup {
+  id          String   @id @default(cuid())
+  groupName   String
+  side        String   // "Bride", "Groom", or "Mixed"
+  priority    String   // "Must-have" or "Nice-to-have"
+  orderNum    Int
+  notes       String?
+  status      String   @default("Not Ready") // "Not Ready", "Ready", "Shot"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  weddingId   String
+  wedding     Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  
+  people      PhotoGroupPerson[]
+}
+
+model PhotoGroupPerson {
+  id           String   @id @default(cuid())
+  photoGroupId String
+  personId     String
+  createdAt    DateTime @default(now())
+  
+  photoGroup   PhotoGroup @relation(fields: [photoGroupId], references: [id], onDelete: Cascade)
+  person       Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
+  
+  @@unique([photoGroupId, personId])
+}

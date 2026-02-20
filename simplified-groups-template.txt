@@ -1,0 +1,6 @@
+The groups page needs to be rewritten to:
+1. Use AddCoupleButton component for the quick couple add
+2. Use DeleteGroupButton component for group deletion
+3. Keep all other server actions as-is (addGroup, moveGroup, duplicateGroup, generateSuggestions)
+4. Import the client components at top
+5. Pass deleteGroup action to DeleteGroupButton
