@@ -1,16 +1,18 @@
 import Link from 'next/link'
 import { prisma } from '@/lib/prisma'
 import { DeleteWeddingButton } from '@/components/DeleteWeddingButton'
+import { revalidatePath } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
 
 async function deleteWedding(formData: FormData) {
   'use server'
   const weddingId = formData.get('weddingId') as string
-  
+
   await prisma.wedding.delete({
     where: { id: weddingId },
   })
+  revalidatePath('/')
 }
 
 export default async function HomePage() {

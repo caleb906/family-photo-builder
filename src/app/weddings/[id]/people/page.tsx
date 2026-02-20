@@ -47,10 +47,12 @@ async function addPerson(formData: FormData) {
 async function deletePerson(formData: FormData) {
   'use server'
   const personId = formData.get('personId') as string
-  
+  const weddingId = formData.get('weddingId') as string
+
   await prisma.person.delete({
     where: { id: personId },
   })
+  revalidatePath(`/weddings/${weddingId}/people`)
 }
 
 export default async function PeoplePage({
