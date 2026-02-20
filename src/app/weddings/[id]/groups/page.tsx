@@ -249,11 +249,7 @@ export default async function PhotoGroupsPage({
       },
       photoGroups: {
         include: {
-          people: {
-            include: {
-              person: true,
-            },
-          },
+          people: true,
         },
         orderBy: { orderNum: 'asc' },
       },
@@ -446,7 +442,7 @@ export default async function PhotoGroupsPage({
                 const peopleNames = group.people.map(p => {
                   if (p.personId === 'bride') return wedding.brideName
                   if (p.personId === 'groom') return wedding.groomName
-                  return p.person.fullName
+                  return wedding.people.find(person => person.id === p.personId)?.fullName ?? '?'
                 })
                 
                 const hasBrideOrGroom = group.people.some(p => 

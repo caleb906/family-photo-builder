@@ -530,7 +530,7 @@ export default async function CoupleFormPage({
     include: {
       people: { orderBy: [{ relationship: 'asc' }, { fullName: 'asc' }] },
       photoGroups: {
-        include: { people: { include: { person: true } } },
+        include: { people: true },
         orderBy: { orderNum: 'asc' },
       },
     },
@@ -782,7 +782,7 @@ export default async function CoupleFormPage({
             const people = group.people.map((p) => {
               if (p.personId === 'bride') return brideName
               if (p.personId === 'groom') return groomName
-              return p.person?.fullName ?? '?'
+              return wedding.people.find(person => person.id === p.personId)?.fullName ?? '?'
             })
             return (
               <div key={group.id} className="flex items-start gap-3 bg-white border border-neutral-200 rounded-xl px-4 py-3 hover:border-neutral-300 transition-colors group">

@@ -29,8 +29,12 @@ type PhotoGroup = {
   status: string
   people: {
     personId: string
-    person: { fullName: string } | null
   }[]
+}
+
+type PersonRecord = {
+  id: string
+  fullName: string
 }
 
 function StatusButton({
@@ -75,6 +79,7 @@ function SectionBlock({
   weddingId,
   brideName,
   groomName,
+  allPeople,
   accentClass,
 }: {
   title: string
@@ -82,6 +87,7 @@ function SectionBlock({
   weddingId: string
   brideName: string
   groomName: string
+  allPeople: PersonRecord[]
   accentClass: string
 }) {
   if (groups.length === 0) return null
@@ -117,7 +123,7 @@ function SectionBlock({
           const people = group.people.map((p) => {
             if (p.personId === 'bride') return brideName
             if (p.personId === 'groom') return groomName
-            return p.person?.fullName ?? '?'
+            return allPeople.find(person => person.id === p.personId)?.fullName ?? '?'
           })
 
           return (
@@ -170,7 +176,7 @@ function SectionBlock({
             const people = group.people.map((p) => {
               if (p.personId === 'bride') return brideName
               if (p.personId === 'groom') return groomName
-              return p.person?.fullName ?? '?'
+              return allPeople.find(person => person.id === p.personId)?.fullName ?? '?'
             })
             return (
               <div
@@ -202,13 +208,12 @@ export default async function ShotListPage({
   const wedding = await prisma.wedding.findUnique({
     where: { id: params.id },
     include: {
+      people: {
+        orderBy: { fullName: 'asc' },
+      },
       photoGroups: {
         include: {
-          people: {
-            include: {
-              person: true,
-            },
-          },
+          people: true,
         },
         orderBy: { orderNum: 'asc' },
       },
@@ -277,6 +282,7 @@ export default async function ShotListPage({
               weddingId={wedding.id}
               brideName={wedding.brideName}
               groomName={wedding.groomName}
+              allPeople={wedding.people}
               accentClass="bg-rose-400"
             />
             <SectionBlock
@@ -285,6 +291,7 @@ export default async function ShotListPage({
               weddingId={wedding.id}
               brideName={wedding.brideName}
               groomName={wedding.groomName}
+              allPeople={wedding.people}
               accentClass="bg-sky-400"
             />
             <SectionBlock
@@ -293,6 +300,7 @@ export default async function ShotListPage({
               weddingId={wedding.id}
               brideName={wedding.brideName}
               groomName={wedding.groomName}
+              allPeople={wedding.people}
               accentClass="bg-purple-400"
             />
           </>

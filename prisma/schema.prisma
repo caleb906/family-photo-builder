@@ -33,11 +33,9 @@ model Person {
   isDivorced   Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
-  
+
   weddingId    String
   wedding      Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
-  
-  photoGroups  PhotoGroupPerson[]
 }
 
 model PhotoGroup {
@@ -60,11 +58,12 @@ model PhotoGroup {
 model PhotoGroupPerson {
   id           String   @id @default(cuid())
   photoGroupId String
+  // personId is a plain string — may be a real Person.id OR a virtual value
+  // like 'bride' / 'groom' which are not FK-constrained on purpose.
   personId     String
   createdAt    DateTime @default(now())
-  
+
   photoGroup   PhotoGroup @relation(fields: [photoGroupId], references: [id], onDelete: Cascade)
-  person       Person     @relation(fields: [personId], references: [id], onDelete: Cascade)
-  
+
   @@unique([photoGroupId, personId])
 }
