@@ -722,7 +722,7 @@ export default async function CoupleFormPage({
             <p className="text-sm font-medium text-neutral-500 uppercase tracking-wider mb-4">Who's filling this out?</p>
             <div className="grid sm:grid-cols-2 gap-4 mb-6">
               <Link
-                href={`/weddings/${wedding.id}/couple-form?step=bride-parents`}
+                href={`/weddings/${wedding.id}/couple-form?step=bride-parents&flow=bride`}
                 className="group relative flex flex-col items-center gap-3 p-6 bg-rose-50 hover:bg-rose-100 border-2 border-rose-200 hover:border-rose-400 rounded-2xl transition-all text-left"
               >
                 <div className="w-12 h-12 rounded-full bg-rose-200 flex items-center justify-center text-rose-700 font-bold text-lg flex-shrink-0">
@@ -735,7 +735,7 @@ export default async function CoupleFormPage({
                 <svg className="w-4 h-4 text-rose-400 group-hover:translate-x-1 transition-transform mt-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
               </Link>
               <Link
-                href={`/weddings/${wedding.id}/couple-form?step=groom-parents`}
+                href={`/weddings/${wedding.id}/couple-form?step=groom-parents&flow=groom`}
                 className="group relative flex flex-col items-center gap-3 p-6 bg-sky-50 hover:bg-sky-100 border-2 border-sky-200 hover:border-sky-400 rounded-2xl transition-all text-left"
               >
                 <div className="w-12 h-12 rounded-full bg-sky-200 flex items-center justify-center text-sky-700 font-bold text-lg flex-shrink-0">
