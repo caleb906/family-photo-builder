@@ -976,45 +976,71 @@ export default async function CoupleFormPage({
 
         {/* ── PHOTO REVIEW ──────────────────────────────────────────────── */}
         {currentStep === 'photo-review' && (() => {
+          // Mixed first → Bride → Groom keeps the couple in one place as long as possible
+          const mixedGroups = wedding.photoGroups.filter((g) => g.side === 'Mixed')
           const brideGroups = wedding.photoGroups.filter((g) => g.side === 'Bride')
           const groomGroups = wedding.photoGroups.filter((g) => g.side === 'Groom')
-          const mixedGroups = wedding.photoGroups.filter((g) => g.side === 'Mixed')
+          const totalShots = wedding.photoGroups.length
+
+          // Running counter so each shot has a sequential number across all sections
+          let shotNum = 0
 
           const renderGroup = (group: typeof wedding.photoGroups[0]) => {
+            shotNum++
+            const num = shotNum
             const people = group.people.map((p) => {
               if (p.personId === 'bride') return brideName
               if (p.personId === 'groom') return groomName
-              return wedding.people.find(person => person.id === p.personId)?.fullName ?? '?'
+              return wedding.people.find((person) => person.id === p.personId)?.fullName ?? '?'
             })
             return (
-              <div key={group.id} className="flex items-start gap-3 bg-white border border-neutral-200 rounded-xl px-4 py-3 hover:border-neutral-300 transition-colors group">
-                <div className="flex-1 min-w-0 pt-0.5">
-                  <p className="font-medium text-neutral-900 text-sm">{group.groupName}</p>
+              <div key={group.id} className="flex items-start gap-3 bg-white border border-neutral-200 rounded-xl px-4 py-3.5 hover:border-neutral-300 transition-colors">
+                {/* Shot number */}
+                <div className="flex-shrink-0 w-7 h-7 rounded-lg bg-neutral-100 flex items-center justify-center text-xs font-bold text-neutral-500 mt-0.5">
+                  {num}
+                </div>
+                {/* Name + people chips */}
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-neutral-900 text-sm leading-snug mb-2">{group.groupName}</p>
                   {people.length > 0 && (
-                    <p className="text-xs text-neutral-500 mt-0.5 truncate">{people.join(', ')}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {people.map((name, i) => (
+                        <span key={i} className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-neutral-100 text-neutral-600 text-xs font-medium">
+                          {name}
+                        </span>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <form action={removeGroup}>
+                {/* Remove button — always visible */}
+                <form action={removeGroup} className="flex-shrink-0 mt-0.5">
                   <input type="hidden" name="groupId" value={group.id} />
                   <input type="hidden" name="weddingId" value={wedding.id} />
                   {flow && <input type="hidden" name="flow" value={flow} />}
-                  <button type="submit" className="opacity-0 group-hover:opacity-100 text-xs text-neutral-400 hover:text-red-500 transition-all px-2 py-1 rounded flex-shrink-0 mt-0.5">
-                    Remove
+                  <button
+                    type="submit"
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-neutral-300 hover:text-red-400 hover:bg-red-50 transition-all text-xl font-light leading-none"
+                    title="Remove this shot"
+                  >
+                    ×
                   </button>
                 </form>
               </div>
             )
           }
 
-          const renderSection = (title: string, groups: typeof wedding.photoGroups, dot: string) => {
+          const renderSection = (title: string, groups: typeof wedding.photoGroups, dotColor: string, note?: string) => {
             if (groups.length === 0) return null
             return (
-              <div className="mb-6">
+              <div className="mb-8 last:mb-0">
                 <div className="flex items-center gap-2 mb-3">
-                  <div className={`w-2 h-2 rounded-full ${dot}`} />
-                  <h3 className="font-semibold text-neutral-700 text-sm">{title}</h3>
-                  <span className="text-xs text-neutral-400">{groups.length} shots</span>
+                  <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${dotColor}`} />
+                  <h3 className="font-semibold text-neutral-800 text-sm">{title}</h3>
+                  <span className="ml-auto text-xs text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                    {groups.length} shots
+                  </span>
                 </div>
+                {note && <p className="text-xs text-neutral-400 mb-3 pl-5">{note}</p>}
                 <div className="space-y-2">{groups.map(renderGroup)}</div>
               </div>
             )
@@ -1023,25 +1049,44 @@ export default async function CoupleFormPage({
           return (
             <div>
               <div className="mb-8 text-center">
-                <div className="text-4xl mb-4">📷</div>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">Your Photo List</h1>
-                <p className="text-neutral-600 max-w-md mx-auto">
-                  We've put together shots based on your family. Remove anything that doesn't feel right — your photographer will help you finalize the rest.
-                </p>
-              </div>
-
-              <div className="bg-white border border-neutral-200 rounded-2xl p-6 mb-6">
-                {renderSection(`${brideName}'s Family`, brideGroups, 'bg-rose-400')}
-                {renderSection(`${groomName}'s Family`, groomGroups, 'bg-sky-400')}
-                {renderSection('Together', mixedGroups, 'bg-purple-400')}
-                {wedding.photoGroups.length === 0 && (
-                  <p className="text-neutral-500 text-center py-4">No photo groups yet. Go back and add your family first.</p>
+                <div className="text-4xl mb-4">📋</div>
+                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">Your Shot List</h1>
+                {totalShots > 0 ? (
+                  <>
+                    <p className="text-neutral-600 max-w-md mx-auto mb-2">
+                      {totalShots} shots, ordered to keep {brideName} & {groomName} moving as little as possible.
+                    </p>
+                    <p className="text-sm text-neutral-500 max-w-sm mx-auto">
+                      Your coordinator will roll-call each shot. Tap <span className="font-mono bg-neutral-100 px-1 rounded">×</span> on anything that feels like overkill — keep only what matters.
+                    </p>
+                  </>
+                ) : (
+                  <p className="text-neutral-500">Go back and add your family to build the shot list.</p>
                 )}
               </div>
 
-              <div className="text-center text-xs text-neutral-400 mb-6">
-                Hover over any shot to remove it · Your photographer may add more
-              </div>
+              {totalShots > 0 && (
+                <div className="bg-white border border-neutral-200 rounded-2xl p-6 mb-6">
+                  {renderSection(
+                    'Both Families Together',
+                    mixedGroups,
+                    'bg-purple-400',
+                    'Start here — everyone present, then release groups as you go.'
+                  )}
+                  {renderSection(
+                    `${brideName}'s Family`,
+                    brideGroups,
+                    'bg-rose-400',
+                    `${groomName}'s family can step aside for these.`
+                  )}
+                  {renderSection(
+                    `${groomName}'s Family`,
+                    groomGroups,
+                    'bg-sky-400',
+                    `${brideName}'s family can step aside for these.`
+                  )}
+                </div>
+              )}
 
               <div className="flex items-center justify-between">
                 <Link href={`/weddings/${wedding.id}/couple-form?step=extras${flow ? `&flow=${flow}` : ''}`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
