@@ -190,20 +190,67 @@ async function updatePersonName(formData: FormData) {
   redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}${flowSuffix(flow)}`)
 }
 
+// ─── Step helpers ─────────────────────────────────────────────────────────────
+
+/** Returns "Next: Foo →" label based on the actual next step in the current flow */
+function getNextLabel(next: StepId | null, brideName: string, groomName: string): string {
+  if (!next) return 'Next →'
+  const labels: Partial<Record<StepId, string>> = {
+    'bride-parents':      `${brideName}'s Parents`,
+    'groom-parents':      `${groomName}'s Parents`,
+    'bride-siblings':     `${brideName}'s Siblings`,
+    'groom-siblings':     `${groomName}'s Siblings`,
+    'bride-grandparents': `${brideName}'s Grandparents`,
+    'groom-grandparents': `${groomName}'s Grandparents`,
+    'extras':             'Anyone Else?',
+    'photo-review':       'Build Photo List',
+    'done':               'Done',
+  }
+  const label = labels[next]
+  return label ? `Next: ${label} →` : 'Next →'
+}
+
+/** Returns "N of Total" step counter respecting the active flow */
+function getStepNum(stepId: StepId, flow?: string): string {
+  if (flow === 'bride') {
+    const m: Partial<Record<StepId, string>> = {
+      'bride-parents': '1 of 4', 'bride-siblings': '2 of 4',
+      'bride-grandparents': '3 of 4', 'extras': '4 of 4',
+    }
+    return m[stepId] ?? ''
+  }
+  if (flow === 'groom') {
+    const m: Partial<Record<StepId, string>> = {
+      'groom-parents': '1 of 4', 'groom-siblings': '2 of 4',
+      'groom-grandparents': '3 of 4', 'extras': '4 of 4',
+    }
+    return m[stepId] ?? ''
+  }
+  const m: Partial<Record<StepId, string>> = {
+    'bride-parents': '1 of 7', 'groom-parents': '2 of 7',
+    'bride-siblings': '3 of 7', 'groom-siblings': '4 of 7',
+    'bride-grandparents': '5 of 7', 'groom-grandparents': '6 of 7',
+    'extras': '7 of 7',
+  }
+  return m[stepId] ?? ''
+}
+
 // ─── Shared components ───────────────────────────────────────────────────────
 
 function ProgressDots({
   currentStep,
   brideName,
   groomName,
+  flow,
 }: {
   currentStep: StepId
   brideName: string
   groomName: string
+  flow?: string
 }) {
   if (currentStep === 'intro' || currentStep === 'done') return null
 
-  const steps = [
+  const allSteps = [
     { id: 'bride-parents',      label: `${brideName}'s Parents` },
     { id: 'groom-parents',      label: `${groomName}'s Parents` },
     { id: 'bride-siblings',     label: `${brideName}'s Siblings` },
@@ -213,6 +260,12 @@ function ProgressDots({
     { id: 'extras',             label: 'Anyone Else?' },
     { id: 'photo-review',       label: 'Photo List' },
   ]
+
+  const steps = flow === 'bride'
+    ? allSteps.filter((s) => !s.id.startsWith('groom-'))
+    : flow === 'groom'
+    ? allSteps.filter((s) => !s.id.startsWith('bride-'))
+    : allSteps
 
   const currentIdx = steps.findIndex((s) => s.id === currentStep)
 
@@ -695,7 +748,7 @@ export default async function CoupleFormPage({
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-10">
-        <ProgressDots currentStep={currentStep} brideName={brideName} groomName={groomName} />
+        <ProgressDots currentStep={currentStep} brideName={brideName} groomName={groomName} flow={flow} />
 
         {/* ── INTRO ─────────────────────────────────────────────────────── */}
         {currentStep === 'intro' && (
@@ -760,9 +813,9 @@ export default async function CoupleFormPage({
         {currentStep === 'bride-parents' && (
           <ParentStep
             side="Bride" sideName={brideName}
-            stepLabel={`${brideName}'s Family`} stepNum="1 of 7"
+            stepLabel={`${brideName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel={`Next: ${groomName}'s Parents →`}
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             people={byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...brideStyles}
@@ -773,9 +826,9 @@ export default async function CoupleFormPage({
         {currentStep === 'groom-parents' && (
           <ParentStep
             side="Groom" sideName={groomName}
-            stepLabel={`${groomName}'s Family`} stepNum="2 of 7"
+            stepLabel={`${groomName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel={`Next: ${brideName}'s Siblings →`}
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             people={byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...groomStyles}
@@ -786,9 +839,9 @@ export default async function CoupleFormPage({
         {currentStep === 'bride-siblings' && (
           <FamilyStep
             side="Bride" sideName={brideName}
-            stepLabel={`${brideName}'s Family`} stepNum="3 of 7"
+            stepLabel={`${brideName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel={`Next: ${groomName}'s Siblings →`}
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${brideName}'s Siblings`}
             description={`Add ${brideName}'s brothers and sisters, and their partners if they'll be in photos.`}
@@ -805,9 +858,9 @@ export default async function CoupleFormPage({
         {currentStep === 'groom-siblings' && (
           <FamilyStep
             side="Groom" sideName={groomName}
-            stepLabel={`${groomName}'s Family`} stepNum="4 of 7"
+            stepLabel={`${groomName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel={`Next: ${brideName}'s Grandparents →`}
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${groomName}'s Siblings`}
             description={`Add ${groomName}'s brothers and sisters, and their partners if they'll be in photos.`}
@@ -824,9 +877,9 @@ export default async function CoupleFormPage({
         {currentStep === 'bride-grandparents' && (
           <FamilyStep
             side="Bride" sideName={brideName}
-            stepLabel={`${brideName}'s Family`} stepNum="5 of 7"
+            stepLabel={`${brideName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel={`Next: ${groomName}'s Grandparents →`}
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${brideName}'s Grandparents`}
             description="Will any grandparents be there? Add them so we make sure they're included."
@@ -841,9 +894,9 @@ export default async function CoupleFormPage({
         {currentStep === 'groom-grandparents' && (
           <FamilyStep
             side="Groom" sideName={groomName}
-            stepLabel={`${groomName}'s Family`} stepNum="6 of 7"
+            stepLabel={`${groomName}'s Family`} stepNum={getStepNum(currentStep, flow)}
             currentStep={currentStep} prev={prev} next={next}
-            nextLabel="Next: Anyone Else? →"
+            nextLabel={getNextLabel(next, brideName, groomName)}
             weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${groomName}'s Grandparents`}
             description={`Will any of ${groomName}'s grandparents be at the wedding?`}
