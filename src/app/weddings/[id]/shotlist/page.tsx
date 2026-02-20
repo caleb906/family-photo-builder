@@ -1,6 +1,7 @@
 import Link from 'next/link'
-import { notFound, redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
+import { revalidatePath } from 'next/cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -9,13 +10,188 @@ async function updateStatus(formData: FormData) {
   const groupId = formData.get('groupId') as string
   const weddingId = formData.get('weddingId') as string
   const newStatus = formData.get('status') as string
-  
+
   await prisma.photoGroup.update({
     where: { id: groupId },
     data: { status: newStatus },
   })
-  
-  redirect(`/weddings/${weddingId}/shotlist`)
+
+  revalidatePath(`/weddings/${weddingId}/shotlist`)
+}
+
+type PhotoGroup = {
+  id: string
+  groupName: string
+  side: string
+  priority: string
+  orderNum: number
+  notes: string | null
+  status: string
+  people: {
+    personId: string
+    person: { fullName: string } | null
+  }[]
+}
+
+function StatusButton({
+  group,
+  weddingId,
+}: {
+  group: PhotoGroup
+  weddingId: string
+}) {
+  const next =
+    group.status === 'Not Ready' ? 'Ready'
+    : group.status === 'Ready' ? 'Shot'
+    : 'Not Ready'
+
+  const isShot = group.status === 'Shot'
+  const isReady = group.status === 'Ready'
+
+  return (
+    <form action={updateStatus}>
+      <input type="hidden" name="groupId" value={group.id} />
+      <input type="hidden" name="weddingId" value={weddingId} />
+      <input type="hidden" name="status" value={next} />
+      <button
+        type="submit"
+        className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap ${
+          isShot
+            ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
+            : isReady
+            ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200'
+            : 'bg-neutral-100 text-neutral-600 hover:bg-neutral-200'
+        }`}
+      >
+        {isShot ? '✓ Shot' : isReady ? '● Ready' : '○ Not Ready'}
+      </button>
+    </form>
+  )
+}
+
+function SectionBlock({
+  title,
+  groups,
+  weddingId,
+  brideName,
+  groomName,
+  accentClass,
+}: {
+  title: string
+  groups: PhotoGroup[]
+  weddingId: string
+  brideName: string
+  groomName: string
+  accentClass: string
+}) {
+  if (groups.length === 0) return null
+
+  const shotCount = groups.filter((g) => g.status === 'Shot').length
+  const mustHaveCount = groups.filter((g) => g.priority === 'Must-have').length
+
+  const sorted = [...groups].sort((a, b) => {
+    if (a.priority === b.priority) return a.orderNum - b.orderNum
+    return a.priority === 'Must-have' ? -1 : 1
+  })
+
+  const active = sorted.filter((g) => g.status !== 'Shot')
+  const shot = sorted.filter((g) => g.status === 'Shot')
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center gap-3 mb-3">
+        <div className={`h-1 w-6 rounded-full ${accentClass}`} />
+        <h2 className="font-semibold text-neutral-800 text-base">{title}</h2>
+        <span className="text-sm text-neutral-400">
+          {shotCount}/{groups.length} shot
+          {mustHaveCount > 0 && (
+            <span className="ml-2 text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
+              {mustHaveCount} must-have
+            </span>
+          )}
+        </span>
+      </div>
+
+      <div className="space-y-1.5">
+        {active.map((group) => {
+          const people = group.people.map((p) => {
+            if (p.personId === 'bride') return brideName
+            if (p.personId === 'groom') return groomName
+            return p.person?.fullName ?? '?'
+          })
+
+          return (
+            <div
+              key={group.id}
+              className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-colors ${
+                group.status === 'Ready'
+                  ? 'bg-yellow-50 border-yellow-200'
+                  : 'bg-white border-neutral-200 hover:border-neutral-300'
+              }`}
+            >
+              <span
+                className={`flex-shrink-0 w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center ${
+                  group.status === 'Ready'
+                    ? 'bg-yellow-400 text-white'
+                    : 'bg-neutral-100 text-neutral-500'
+                }`}
+              >
+                {group.orderNum}
+              </span>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-medium text-neutral-900 text-sm">{group.groupName}</span>
+                  {group.priority === 'Must-have' && (
+                    <span className="text-xs bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">Must</span>
+                  )}
+                </div>
+                {people.length > 0 && (
+                  <p className="text-xs text-neutral-500 mt-0.5 truncate">{people.join(', ')}</p>
+                )}
+                {group.notes && (
+                  <p className="text-xs text-amber-700 bg-amber-50 px-2 py-0.5 rounded mt-1 inline-block">
+                    {group.notes}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex-shrink-0">
+                <StatusButton group={group} weddingId={weddingId} />
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {shot.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {shot.map((group) => {
+            const people = group.people.map((p) => {
+              if (p.personId === 'bride') return brideName
+              if (p.personId === 'groom') return groomName
+              return p.person?.fullName ?? '?'
+            })
+            return (
+              <div
+                key={group.id}
+                className="flex items-center gap-3 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-100 opacity-60"
+              >
+                <span className="flex-shrink-0 w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center bg-emerald-500 text-white">✓</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-neutral-600 line-through">{group.groupName}</span>
+                  {people.length > 0 && (
+                    <p className="text-xs text-neutral-400 truncate">{people.join(', ')}</p>
+                  )}
+                </div>
+                <StatusButton group={group} weddingId={weddingId} />
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default async function ShotListPage({
@@ -39,197 +215,87 @@ export default async function ShotListPage({
     },
   })
 
-  if (!wedding) {
-    notFound()
-  }
+  if (!wedding) notFound()
 
-  const statusCounts = {
-    total: wedding.photoGroups.length,
-    notReady: wedding.photoGroups.filter(g => g.status === 'Not Ready').length,
-    ready: wedding.photoGroups.filter(g => g.status === 'Ready').length,
-    shot: wedding.photoGroups.filter(g => g.status === 'Shot').length,
-  }
+  const all = wedding.photoGroups
+  const brideGroups = all.filter((g) => g.side === 'Bride')
+  const groomGroups = all.filter((g) => g.side === 'Groom')
+  const mixedGroups = all.filter((g) => g.side === 'Mixed')
 
-  const completionPercent = statusCounts.total > 0 
-    ? Math.round((statusCounts.shot / statusCounts.total) * 100)
-    : 0
+  const totalShot = all.filter((g) => g.status === 'Shot').length
+  const totalReady = all.filter((g) => g.status === 'Ready').length
+  const totalNotReady = all.filter((g) => g.status === 'Not Ready').length
+  const pct = all.length > 0 ? Math.round((totalShot / all.length) * 100) : 0
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-neutral-50 via-primary-50/30 to-neutral-100 py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-6 animate-fade-in no-print">
-          <Link href={`/weddings/${wedding.id}`} className="text-neutral-600 hover:text-neutral-900 inline-flex items-center gap-2 mb-4">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-            </svg>
-            Back to dashboard
-          </Link>
-          <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="min-h-screen bg-neutral-50">
+      {/* Sticky header */}
+      <div className="bg-white border-b border-neutral-200 sticky top-0 z-10 no-print">
+        <div className="max-w-3xl mx-auto px-4 py-3">
+          <div className="flex items-center justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-bold text-neutral-900 mb-1">Shot List</h1>
-              <p className="text-neutral-600">
+              <Link href={`/weddings/${wedding.id}`} className="text-neutral-500 hover:text-neutral-800 text-sm flex items-center gap-1 mb-0.5">
+                ← Back
+              </Link>
+              <h1 className="font-bold text-neutral-900 text-lg leading-tight">
                 {wedding.brideName} & {wedding.groomName}
-              </p>
+              </h1>
             </div>
-            <Link 
-              href={`/weddings/${wedding.id}/print`}
-              className="btn btn-secondary"
-            >
-              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-              </svg>
-              Print Version
-            </Link>
+            <div className="flex items-center gap-3">
+              <div className="text-right hidden sm:block">
+                <div className="text-2xl font-bold text-neutral-900 leading-none">{pct}%</div>
+                <div className="text-xs text-neutral-500">{totalShot}/{all.length} shot</div>
+              </div>
+              <Link href={`/weddings/${wedding.id}/print`} className="btn btn-secondary btn-sm">Print</Link>
+            </div>
+          </div>
+
+          <div className="mt-2 h-1.5 bg-neutral-100 rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-500 transition-all duration-500 rounded-full" style={{ width: `${pct}%` }} />
+          </div>
+
+          <div className="flex gap-4 mt-2 text-xs text-neutral-500">
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-neutral-300 inline-block" />{totalNotReady} not ready</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />{totalReady} ready</span>
+            <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />{totalShot} shot</span>
           </div>
         </div>
+      </div>
 
-        {/* Progress Bar */}
-        <div className="card mb-6 animate-slide-up no-print">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold text-neutral-900">Progress</h2>
-            <span className="text-2xl font-bold text-primary-600">{completionPercent}%</span>
-          </div>
-          <div className="w-full h-4 bg-neutral-200 rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-gradient-to-r from-primary-500 to-primary-600 transition-all duration-500"
-              style={{ width: `${completionPercent}%` }}
-            />
-          </div>
-          <div className="grid grid-cols-3 gap-4 mt-4 text-center">
-            <div>
-              <div className="text-2xl font-bold text-neutral-400">{statusCounts.notReady}</div>
-              <div className="text-xs text-neutral-600">Not Ready</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-yellow-600">{statusCounts.ready}</div>
-              <div className="text-xs text-neutral-600">Ready</div>
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-emerald-600">{statusCounts.shot}</div>
-              <div className="text-xs text-neutral-600">Shot</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Groups */}
-        {wedding.photoGroups.length === 0 ? (
-          <div className="card text-center py-12 animate-slide-up">
-            <div className="text-neutral-400 mb-4">
-              <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-              </svg>
-            </div>
+      <div className="max-w-3xl mx-auto px-4 py-6">
+        {all.length === 0 ? (
+          <div className="card text-center py-12">
             <h3 className="text-xl font-semibold text-neutral-700 mb-2">No photo groups yet</h3>
             <p className="text-neutral-500 mb-4">Create some groups first</p>
-            <Link href={`/weddings/${wedding.id}/groups`} className="btn btn-primary">
-              Create Groups
-            </Link>
+            <Link href={`/weddings/${wedding.id}/groups`} className="btn btn-primary">Create Groups</Link>
           </div>
         ) : (
-          <div className="space-y-3">
-            {wedding.photoGroups.map((group, index) => {
-              const peopleNames = group.people.map(p => {
-                if (p.personId === 'bride') return wedding.brideName
-                if (p.personId === 'groom') return wedding.groomName
-                return p.person.fullName
-              })
-              
-              return (
-                <div 
-                  key={group.id} 
-                  className={`card animate-slide-up ${
-                    group.status === 'Shot' ? 'bg-emerald-50 border-emerald-200' :
-                    group.status === 'Ready' ? 'bg-yellow-50 border-yellow-200' :
-                    'bg-white'
-                  }`}
-                  style={{ animationDelay: `${index * 30}ms` }}
-                >
-                  <div className="flex items-start gap-4">
-                    {/* Order Number */}
-                    <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg ${
-                      group.status === 'Shot' ? 'bg-emerald-600 text-white' :
-                      group.status === 'Ready' ? 'bg-yellow-500 text-white' :
-                      'bg-neutral-200 text-neutral-600'
-                    }`}>
-                      {group.orderNum}
-                    </div>
-                    
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-4 mb-2">
-                        <h3 className="font-semibold text-lg text-neutral-900">
-                          {group.groupName}
-                        </h3>
-                        <div className="flex gap-2 flex-shrink-0">
-                          <span className={`badge badge-${group.side.toLowerCase()}`}>
-                            {group.side}
-                          </span>
-                          <span className={`badge ${group.priority === 'Must-have' ? 'badge-must' : 'badge-nice'}`}>
-                            {group.priority}
-                          </span>
-                        </div>
-                      </div>
-                      
-                      <div className="text-neutral-700 mb-3">
-                        <strong className="text-sm text-neutral-600">People:</strong> {peopleNames.join(', ')}
-                      </div>
-                      
-                      {group.notes && (
-                        <div className="text-sm text-neutral-600 bg-white/70 px-3 py-2 rounded border border-neutral-200 mb-3">
-                          <strong>Note:</strong> {group.notes}
-                        </div>
-                      )}
-                      
-                      {/* Status Buttons */}
-                      <form action={updateStatus} method="post" className="no-print">
-                        <input type="hidden" name="groupId" value={group.id} />
-                        <input type="hidden" name="weddingId" value={wedding.id} />
-                        <div className="flex gap-2">
-                          <button
-                            type="submit"
-                            name="status"
-                            value="Not Ready"
-                            className={`btn btn-sm ${
-                              group.status === 'Not Ready' 
-                                ? 'bg-neutral-600 text-white' 
-                                : 'btn-ghost'
-                            }`}
-                          >
-                            Not Ready
-                          </button>
-                          <button
-                            type="submit"
-                            name="status"
-                            value="Ready"
-                            className={`btn btn-sm ${
-                              group.status === 'Ready' 
-                                ? 'bg-yellow-500 text-white' 
-                                : 'btn-ghost'
-                            }`}
-                          >
-                            Ready
-                          </button>
-                          <button
-                            type="submit"
-                            name="status"
-                            value="Shot"
-                            className={`btn btn-sm ${
-                              group.status === 'Shot' 
-                                ? 'bg-emerald-600 text-white' 
-                                : 'btn-ghost'
-                            }`}
-                          >
-                            ✓ Shot
-                          </button>
-                        </div>
-                      </form>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+          <>
+            <SectionBlock
+              title={`${wedding.brideName}'s Family`}
+              groups={brideGroups}
+              weddingId={wedding.id}
+              brideName={wedding.brideName}
+              groomName={wedding.groomName}
+              accentClass="bg-rose-400"
+            />
+            <SectionBlock
+              title={`${wedding.groomName}'s Family`}
+              groups={groomGroups}
+              weddingId={wedding.id}
+              brideName={wedding.brideName}
+              groomName={wedding.groomName}
+              accentClass="bg-sky-400"
+            />
+            <SectionBlock
+              title="Together / Mixed"
+              groups={mixedGroups}
+              weddingId={wedding.id}
+              brideName={wedding.brideName}
+              groomName={wedding.groomName}
+              accentClass="bg-purple-400"
+            />
+          </>
         )}
       </div>
     </div>

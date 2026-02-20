@@ -188,8 +188,8 @@ export default async function PeoplePage({
             </form>
           </div>
 
-          {/* People Lists */}
-          <div className="space-y-6 animate-slide-up animate-delay-100">
+          {/* People Lists — side by side on desktop */}
+          <div className="grid sm:grid-cols-2 gap-4 animate-slide-up animate-delay-100">
             {/* Bride's Side */}
             <div className="card">
               <h2 className="text-xl font-semibold text-neutral-900 mb-4 flex items-center gap-2">

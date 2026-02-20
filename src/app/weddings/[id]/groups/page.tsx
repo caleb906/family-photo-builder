@@ -46,10 +46,12 @@ async function addGroup(formData: FormData) {
 async function deleteGroup(formData: FormData) {
   'use server'
   const groupId = formData.get('groupId') as string
-  
+  const weddingId = formData.get('weddingId') as string
+
   await prisma.photoGroup.delete({
     where: { id: groupId },
   })
+  revalidatePath(`/weddings/${weddingId}/groups`)
 }
 
 async function duplicateGroup(formData: FormData) {
@@ -178,29 +180,35 @@ async function generateSuggestions(formData: FormData) {
     return wedding.people.filter(p => p.side === side).map(p => p.id)
   }
   
+  const b = wedding.brideName
+  const g = wedding.groomName
+
   const templates = [
-    { name: `Couple + ${wedding.brideName}'s Parents`, side: 'Bride', people: [...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad')] },
-    { name: `Couple + ${wedding.brideName}'s Mom`, side: 'Bride', people: findPeople('Bride', 'Mom') },
-    { name: `Couple + ${wedding.brideName}'s Dad`, side: 'Bride', people: findPeople('Bride', 'Dad') },
-    { name: `${wedding.brideName} + ${wedding.brideName}'s Mom`, side: 'Bride', people: findPeople('Bride', 'Mom') },
-    { name: `${wedding.brideName} + ${wedding.brideName}'s Dad`, side: 'Bride', people: findPeople('Bride', 'Dad') },
-    { name: `Couple + ${wedding.brideName}'s Siblings`, side: 'Bride', people: findPeople('Bride', 'Sibling') },
-    { name: `${wedding.brideName} + ${wedding.brideName}'s Siblings`, side: 'Bride', people: findPeople('Bride', 'Sibling') },
-    { name: `Couple + ${wedding.brideName}'s Grandparents`, side: 'Bride', people: findPeople('Bride', 'Grandparent') },
-    { name: `Couple + ${wedding.brideName}'s Extended Family`, side: 'Bride', people: findAllBySide('Bride') },
-    
-    { name: `Couple + ${wedding.groomName}'s Parents`, side: 'Groom', people: [...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
-    { name: `Couple + ${wedding.groomName}'s Mom`, side: 'Groom', people: findPeople('Groom', 'Mom') },
-    { name: `Couple + ${wedding.groomName}'s Dad`, side: 'Groom', people: findPeople('Groom', 'Dad') },
-    { name: `${wedding.groomName} + ${wedding.groomName}'s Mom`, side: 'Groom', people: findPeople('Groom', 'Mom') },
-    { name: `${wedding.groomName} + ${wedding.groomName}'s Dad`, side: 'Groom', people: findPeople('Groom', 'Dad') },
-    { name: `Couple + ${wedding.groomName}'s Siblings`, side: 'Groom', people: findPeople('Groom', 'Sibling') },
-    { name: `${wedding.groomName} + ${wedding.groomName}'s Siblings`, side: 'Groom', people: findPeople('Groom', 'Sibling') },
-    { name: `Couple + ${wedding.groomName}'s Grandparents`, side: 'Groom', people: findPeople('Groom', 'Grandparent') },
-    { name: `Couple + ${wedding.groomName}'s Extended Family`, side: 'Groom', people: findAllBySide('Groom') },
-    
-    { name: 'Couple + Both sets of parents', side: 'Mixed', people: [...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad'), ...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
-    { name: 'Couple + Immediate families', side: 'Mixed', people: [...findAllBySide('Bride'), ...findAllBySide('Groom')] },
+    // Bride's side — "Couple" shots include both bride + groom virtual IDs
+    { name: `Couple + ${b}'s Parents`,       side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad')] },
+    { name: `Couple + ${b}'s Mom`,            side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Mom')] },
+    { name: `Couple + ${b}'s Dad`,            side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Dad')] },
+    { name: `${b} + ${b}'s Mom`,              side: 'Bride', people: ['bride', ...findPeople('Bride', 'Mom')] },
+    { name: `${b} + ${b}'s Dad`,              side: 'Bride', people: ['bride', ...findPeople('Bride', 'Dad')] },
+    { name: `Couple + ${b}'s Siblings`,       side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Sibling')] },
+    { name: `${b} + ${b}'s Siblings`,         side: 'Bride', people: ['bride', ...findPeople('Bride', 'Sibling')] },
+    { name: `Couple + ${b}'s Grandparents`,   side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Grandparent')] },
+    { name: `Couple + ${b}'s Extended Family`,side: 'Bride', people: ['bride', 'groom', ...findAllBySide('Bride')] },
+
+    // Groom's side
+    { name: `Couple + ${g}'s Parents`,       side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
+    { name: `Couple + ${g}'s Mom`,            side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Mom')] },
+    { name: `Couple + ${g}'s Dad`,            side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Dad')] },
+    { name: `${g} + ${g}'s Mom`,              side: 'Groom', people: ['groom', ...findPeople('Groom', 'Mom')] },
+    { name: `${g} + ${g}'s Dad`,              side: 'Groom', people: ['groom', ...findPeople('Groom', 'Dad')] },
+    { name: `Couple + ${g}'s Siblings`,       side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Sibling')] },
+    { name: `${g} + ${g}'s Siblings`,         side: 'Groom', people: ['groom', ...findPeople('Groom', 'Sibling')] },
+    { name: `Couple + ${g}'s Grandparents`,   side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Grandparent')] },
+    { name: `Couple + ${g}'s Extended Family`,side: 'Groom', people: ['bride', 'groom', ...findAllBySide('Groom')] },
+
+    // Mixed
+    { name: 'Couple + Both sets of parents',  side: 'Mixed', people: ['bride', 'groom', ...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad'), ...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
+    { name: 'Couple + Immediate families',    side: 'Mixed', people: ['bride', 'groom', ...findAllBySide('Bride'), ...findAllBySide('Groom')] },
   ]
   
   for (const template of templates) {
