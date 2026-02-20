@@ -55,9 +55,7 @@ async function addPerson(formData: FormData) {
     },
   })
 
-  redirect(
-    `/weddings/${weddingId}/couple-form?step=${currentStep}&added=${encodeURIComponent(fullName)}`
-  )
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
 }
 
 async function generateAndReview(formData: FormData) {
@@ -216,49 +214,6 @@ function ProgressDots({
   )
 }
 
-/** Shown after a successful add — lets user add another or move on */
-function AddedConfirmation({
-  name,
-  currentStep,
-  nextStep,
-  weddingId,
-  accentClass,
-}: {
-  name: string
-  currentStep: StepId
-  nextStep: StepId | null
-  weddingId: string
-  accentClass: string
-}) {
-  return (
-    <div className="text-center py-8">
-      <div className={`w-16 h-16 rounded-full ${accentClass} flex items-center justify-center mx-auto mb-4 text-2xl`}>
-        ✓
-      </div>
-      <h2 className="font-display text-2xl font-semibold text-neutral-900 mb-1">
-        {name} added!
-      </h2>
-      <p className="text-neutral-500 mb-8">Would you like to add another, or move on?</p>
-      <div className="flex flex-col sm:flex-row gap-3 justify-center">
-        <Link
-          href={`/weddings/${weddingId}/couple-form?step=${currentStep}`}
-          className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border-2 border-neutral-200 text-neutral-700 font-medium hover:border-neutral-300 hover:bg-neutral-50 transition-colors"
-        >
-          + Add Another
-        </Link>
-        {nextStep && (
-          <Link
-            href={`/weddings/${weddingId}/couple-form?step=${nextStep}`}
-            className="inline-flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-medium transition-colors shadow-sm"
-          >
-            Move On →
-          </Link>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function PersonBadge({
   person,
   weddingId,
@@ -387,7 +342,6 @@ function ParentStep({
   next,
   nextLabel,
   weddingId,
-  added,
   editingId,
   accentBg,
   accentBorder,
@@ -407,7 +361,6 @@ function ParentStep({
   next: StepId | null
   nextLabel: string
   weddingId: string
-  added: string | undefined
   editingId: string | undefined
   accentBg: string
   accentBorder: string
@@ -418,10 +371,6 @@ function ParentStep({
   accentInitialText: string
   people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
 }) {
-  if (added) {
-    return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={weddingId} accentClass={`${accentBg} ${accentText}`} />
-  }
-
   const existingMom = people.find((p) => p.relationship === 'Mom')
   const existingDad = people.find((p) => p.relationship === 'Dad')
   const stepParents = people.filter((p) => p.relationship === 'Step Mom' || p.relationship === 'Step Dad')
@@ -534,7 +483,6 @@ function FamilyStep({
   next,
   nextLabel,
   weddingId,
-  added,
   editingId,
   heading,
   description,
@@ -560,7 +508,6 @@ function FamilyStep({
   next: StepId | null
   nextLabel: string
   weddingId: string
-  added: string | undefined
   editingId: string | undefined
   heading: string
   description: string
@@ -577,10 +524,6 @@ function FamilyStep({
   accentInitialText: string
   people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
 }) {
-  if (added) {
-    return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={weddingId} accentClass={`${accentBg} ${accentText}`} />
-  }
-
   return (
     <div>
       <div className="mb-8">
@@ -649,7 +592,7 @@ export default async function CoupleFormPage({
   searchParams,
 }: {
   params: { id: string }
-  searchParams: { step?: string; added?: string; editing?: string }
+  searchParams: { step?: string; editing?: string }
 }) {
   const wedding = await prisma.wedding.findUnique({
     where: { id: params.id },
@@ -669,7 +612,6 @@ export default async function CoupleFormPage({
     ? (rawStep as StepId)
     : 'intro'
 
-  const added = searchParams.added as string | undefined
   const editingId = searchParams.editing as string | undefined
   const { prev, next } = getAdjacentSteps(currentStep)
 
@@ -726,7 +668,7 @@ export default async function CoupleFormPage({
                 {new Date(wedding.weddingDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             )}
-            <div className="bg-rose-50 border border-rose-100 rounded-2xl p-6 mb-10 text-left">
+            <div className="bg-rose-50 border border-rose-100 rounded-2xl p-6 mb-8 text-left">
               <h2 className="font-semibold text-neutral-900 mb-3">Here's how this works 👋</h2>
               <ul className="space-y-2 text-neutral-700">
                 <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>We'll walk you through each part of your family, one step at a time.</li>
@@ -735,9 +677,41 @@ export default async function CoupleFormPage({
                 <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>Takes about 5 minutes — your photographer handles the rest!</li>
               </ul>
             </div>
-            <Link href={`/weddings/${wedding.id}/couple-form?step=bride-parents`} className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-8 py-4 rounded-2xl font-semibold text-lg transition-colors shadow-md">
-              Let's Start
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+
+            {/* Side-selection cards */}
+            <p className="text-sm font-medium text-neutral-500 uppercase tracking-wider mb-4">Who's filling this out?</p>
+            <div className="grid sm:grid-cols-2 gap-4 mb-6">
+              <Link
+                href={`/weddings/${wedding.id}/couple-form?step=bride-parents`}
+                className="group relative flex flex-col items-center gap-3 p-6 bg-rose-50 hover:bg-rose-100 border-2 border-rose-200 hover:border-rose-400 rounded-2xl transition-all text-left"
+              >
+                <div className="w-12 h-12 rounded-full bg-rose-200 flex items-center justify-center text-rose-700 font-bold text-lg flex-shrink-0">
+                  {brideName.charAt(0).toUpperCase()}
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold text-neutral-900 text-base">{brideName}</p>
+                  <p className="text-sm text-neutral-600 mt-0.5">Add {brideName}'s family</p>
+                </div>
+                <svg className="w-4 h-4 text-rose-400 group-hover:translate-x-1 transition-transform mt-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+              </Link>
+              <Link
+                href={`/weddings/${wedding.id}/couple-form?step=groom-parents`}
+                className="group relative flex flex-col items-center gap-3 p-6 bg-sky-50 hover:bg-sky-100 border-2 border-sky-200 hover:border-sky-400 rounded-2xl transition-all text-left"
+              >
+                <div className="w-12 h-12 rounded-full bg-sky-200 flex items-center justify-center text-sky-700 font-bold text-lg flex-shrink-0">
+                  {groomName.charAt(0).toUpperCase()}
+                </div>
+                <div className="text-center">
+                  <p className="font-semibold text-neutral-900 text-base">{groomName}</p>
+                  <p className="text-sm text-neutral-600 mt-0.5">Add {groomName}'s family</p>
+                </div>
+                <svg className="w-4 h-4 text-sky-400 group-hover:translate-x-1 transition-transform mt-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+              </Link>
+            </div>
+
+            <p className="text-xs text-neutral-400 mb-2">— or —</p>
+            <Link href={`/weddings/${wedding.id}/couple-form?step=bride-parents`} className="inline-flex items-center gap-2 text-neutral-500 hover:text-neutral-800 text-sm transition-colors">
+              Walk through everything together →
             </Link>
           </div>
         )}
@@ -749,7 +723,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="1 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Parents →`}
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             people={byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...brideStyles}
           />
@@ -762,7 +736,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="2 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Siblings →`}
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             people={byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...groomStyles}
           />
@@ -775,7 +749,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="3 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Siblings →`}
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             heading={`${brideName}'s Siblings`}
             description={`Add ${brideName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -794,7 +768,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="4 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Grandparents →`}
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             heading={`${groomName}'s Siblings`}
             description={`Add ${groomName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -813,7 +787,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="5 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Grandparents →`}
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             heading={`${brideName}'s Grandparents`}
             description="Will any grandparents be there? Add them so we make sure they're included."
             primaryRelationship="Grandparent"
@@ -830,7 +804,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="6 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel="Next: Anyone Else? →"
-            weddingId={wedding.id} added={added} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId}
             heading={`${groomName}'s Grandparents`}
             description={`Will any of ${groomName}'s grandparents be at the wedding?`}
             primaryRelationship="Grandparent"
@@ -845,10 +819,6 @@ export default async function CoupleFormPage({
           const EXTRA_RELS = ['Aunt/Uncle', 'Cousin', 'Friend', 'Other']
           const brideSide = wedding.people.filter((p) => p.side === 'Bride')
           const groomSide = wedding.people.filter((p) => p.side === 'Groom')
-
-          if (added) {
-            return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={wedding.id} accentClass="bg-neutral-100 text-neutral-700" />
-          }
 
           return (
             <div>
