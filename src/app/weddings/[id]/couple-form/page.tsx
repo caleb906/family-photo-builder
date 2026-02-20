@@ -1,6 +1,5 @@
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
-import { revalidatePath } from 'next/cache'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -15,6 +14,7 @@ const STEP_IDS = [
   'bride-grandparents',
   'groom-grandparents',
   'extras',
+  'photo-review',
   'done',
 ] as const
 
@@ -25,23 +25,24 @@ function getAdjacentSteps(stepId: StepId) {
   return {
     prev: idx > 0 ? STEP_IDS[idx - 1] : null,
     next: idx < STEP_IDS.length - 1 ? STEP_IDS[idx + 1] : null,
-    index: idx,
-    total: STEP_IDS.length - 2, // exclude intro + done from progress count
-    progressIndex: Math.max(0, idx - 1), // 0-based among the real steps
   }
 }
 
 // ─── Server actions ──────────────────────────────────────────────────────────
+
 async function addPerson(formData: FormData) {
   'use server'
   const weddingId = formData.get('weddingId') as string
+  const currentStep = (formData.get('currentStep') as string) || 'intro'
   const fullName = (formData.get('fullName') as string)?.trim()
   const side = formData.get('side') as string
   const relationship = formData.get('relationship') as string
   const notes = formData.get('notes') as string
   const isDivorced = formData.get('isDivorced') === 'on'
 
-  if (!fullName) return
+  if (!fullName) {
+    redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+  }
 
   await prisma.person.create({
     data: {
@@ -54,10 +55,100 @@ async function addPerson(formData: FormData) {
     },
   })
 
-  revalidatePath(`/weddings/${weddingId}/couple-form`)
+  redirect(
+    `/weddings/${weddingId}/couple-form?step=${currentStep}&added=${encodeURIComponent(fullName)}`
+  )
 }
 
-// ─── Sub-components ─────────────────────────────────────────────────────────
+async function generateAndReview(formData: FormData) {
+  'use server'
+  const weddingId = formData.get('weddingId') as string
+
+  const wedding = await prisma.wedding.findUnique({
+    where: { id: weddingId },
+    include: { people: true },
+  })
+  if (!wedding) return
+
+  // Only generate if no groups exist yet
+  const existingCount = await prisma.photoGroup.count({ where: { weddingId } })
+  if (existingCount === 0) {
+    const maxOrder = await prisma.photoGroup.findFirst({
+      where: { weddingId },
+      orderBy: { orderNum: 'desc' },
+      select: { orderNum: true },
+    })
+    let orderNum = (maxOrder?.orderNum ?? 0) + 1
+
+    const b = wedding.brideName
+    const g = wedding.groomName
+
+    const findPeople = (side: string, relationship: string) =>
+      wedding.people.filter((p) => p.side === side && p.relationship === relationship).map((p) => p.id)
+
+    const findAllBySide = (side: string) =>
+      wedding.people.filter((p) => p.side === side).map((p) => p.id)
+
+    const templates = [
+      // Bride's side
+      { name: `Couple + ${b}'s Parents`,        side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad')] },
+      { name: `Couple + ${b}'s Mom`,             side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Mom')] },
+      { name: `Couple + ${b}'s Dad`,             side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Dad')] },
+      { name: `${b} + ${b}'s Mom`,               side: 'Bride', people: ['bride', ...findPeople('Bride', 'Mom')] },
+      { name: `${b} + ${b}'s Dad`,               side: 'Bride', people: ['bride', ...findPeople('Bride', 'Dad')] },
+      { name: `Couple + ${b}'s Siblings`,        side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Sibling')] },
+      { name: `${b} + ${b}'s Siblings`,          side: 'Bride', people: ['bride', ...findPeople('Bride', 'Sibling')] },
+      { name: `Couple + ${b}'s Grandparents`,    side: 'Bride', people: ['bride', 'groom', ...findPeople('Bride', 'Grandparent')] },
+      { name: `Couple + ${b}'s Extended Family`, side: 'Bride', people: ['bride', 'groom', ...findAllBySide('Bride')] },
+      // Groom's side
+      { name: `Couple + ${g}'s Parents`,        side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
+      { name: `Couple + ${g}'s Mom`,             side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Mom')] },
+      { name: `Couple + ${g}'s Dad`,             side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Dad')] },
+      { name: `${g} + ${g}'s Mom`,               side: 'Groom', people: ['groom', ...findPeople('Groom', 'Mom')] },
+      { name: `${g} + ${g}'s Dad`,               side: 'Groom', people: ['groom', ...findPeople('Groom', 'Dad')] },
+      { name: `Couple + ${g}'s Siblings`,        side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Sibling')] },
+      { name: `${g} + ${g}'s Siblings`,          side: 'Groom', people: ['groom', ...findPeople('Groom', 'Sibling')] },
+      { name: `Couple + ${g}'s Grandparents`,    side: 'Groom', people: ['bride', 'groom', ...findPeople('Groom', 'Grandparent')] },
+      { name: `Couple + ${g}'s Extended Family`, side: 'Groom', people: ['bride', 'groom', ...findAllBySide('Groom')] },
+      // Mixed
+      { name: 'Couple + Both sets of parents',   side: 'Mixed', people: ['bride', 'groom', ...findPeople('Bride', 'Mom'), ...findPeople('Bride', 'Dad'), ...findPeople('Groom', 'Mom'), ...findPeople('Groom', 'Dad')] },
+      { name: 'Couple + Immediate families',     side: 'Mixed', people: ['bride', 'groom', ...findAllBySide('Bride'), ...findAllBySide('Groom')] },
+    ]
+
+    for (const template of templates) {
+      // Only create if the relevant family members exist (or it's a couple-only type)
+      const familyPeople = template.people.filter((id) => id !== 'bride' && id !== 'groom')
+      if (familyPeople.length > 0) {
+        await prisma.photoGroup.create({
+          data: {
+            groupName: template.name,
+            side: template.side,
+            priority: 'Must-have',
+            orderNum: orderNum++,
+            status: 'Not Ready',
+            weddingId,
+            people: {
+              create: template.people.map((personId) => ({ personId })),
+            },
+          },
+        })
+      }
+    }
+  }
+
+  redirect(`/weddings/${weddingId}/couple-form?step=photo-review`)
+}
+
+async function removeGroup(formData: FormData) {
+  'use server'
+  const groupId = formData.get('groupId') as string
+  const weddingId = formData.get('weddingId') as string
+
+  await prisma.photoGroup.delete({ where: { id: groupId } })
+  redirect(`/weddings/${weddingId}/couple-form?step=photo-review`)
+}
+
+// ─── Shared components ───────────────────────────────────────────────────────
 
 function ProgressDots({
   currentStep,
@@ -71,13 +162,14 @@ function ProgressDots({
   if (currentStep === 'intro' || currentStep === 'done') return null
 
   const steps = [
-    { id: 'bride-parents', label: `${brideName}'s Parents` },
-    { id: 'groom-parents', label: `${groomName}'s Parents` },
-    { id: 'bride-siblings', label: `${brideName}'s Siblings` },
-    { id: 'groom-siblings', label: `${groomName}'s Siblings` },
+    { id: 'bride-parents',      label: `${brideName}'s Parents` },
+    { id: 'groom-parents',      label: `${groomName}'s Parents` },
+    { id: 'bride-siblings',     label: `${brideName}'s Siblings` },
+    { id: 'groom-siblings',     label: `${groomName}'s Siblings` },
     { id: 'bride-grandparents', label: `${brideName}'s Grandparents` },
     { id: 'groom-grandparents', label: `${groomName}'s Grandparents` },
-    { id: 'extras', label: 'Anyone Else?' },
+    { id: 'extras',             label: 'Anyone Else?' },
+    { id: 'photo-review',       label: 'Photo List' },
   ]
 
   const currentIdx = steps.findIndex((s) => s.id === currentStep)
@@ -101,15 +193,50 @@ function ProgressDots({
   )
 }
 
-function PersonBadge({
+/** Shown after a successful add — lets user add another or move on */
+function AddedConfirmation({
   name,
-  relationship,
-  isDivorced,
+  currentStep,
+  nextStep,
+  weddingId,
+  accentClass,
 }: {
   name: string
-  relationship: string
-  isDivorced?: boolean
+  currentStep: StepId
+  nextStep: StepId | null
+  weddingId: string
+  accentClass: string
 }) {
+  return (
+    <div className="text-center py-8">
+      <div className={`w-16 h-16 rounded-full ${accentClass} flex items-center justify-center mx-auto mb-4 text-2xl`}>
+        ✓
+      </div>
+      <h2 className="font-display text-2xl font-semibold text-neutral-900 mb-1">
+        {name} added!
+      </h2>
+      <p className="text-neutral-500 mb-8">Would you like to add another, or move on?</p>
+      <div className="flex flex-col sm:flex-row gap-3 justify-center">
+        <Link
+          href={`/weddings/${weddingId}/couple-form?step=${currentStep}`}
+          className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border-2 border-neutral-200 text-neutral-700 font-medium hover:border-neutral-300 hover:bg-neutral-50 transition-colors"
+        >
+          + Add Another
+        </Link>
+        {nextStep && (
+          <Link
+            href={`/weddings/${weddingId}/couple-form?step=${nextStep}`}
+            className="inline-flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-medium transition-colors shadow-sm"
+          >
+            Move On →
+          </Link>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PersonBadge({ name, relationship, isDivorced }: { name: string; relationship: string; isDivorced?: boolean }) {
   return (
     <div className="flex items-center gap-3 py-2.5 px-4 bg-white rounded-xl border border-neutral-200 shadow-sm">
       <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 font-semibold text-sm flex-shrink-0">
@@ -120,9 +247,7 @@ function PersonBadge({
         <p className="text-xs text-neutral-500 leading-tight">{relationship}</p>
       </div>
       {isDivorced && (
-        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full flex-shrink-0">
-          Divorced
-        </span>
+        <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full flex-shrink-0">Divorced</span>
       )}
     </div>
   )
@@ -133,46 +258,261 @@ function StepNav({
   prev,
   next,
   nextLabel = 'Next →',
-  skipLabel = 'Skip this step',
-  skipTo,
 }: {
   weddingId: string
   prev: StepId | null
   next: StepId | null
   nextLabel?: string
-  skipLabel?: string
-  skipTo?: StepId | null
 }) {
   return (
     <div className="flex items-center justify-between mt-8 pt-6 border-t border-neutral-100">
       <div>
         {prev && (
-          <Link
-            href={`/weddings/${weddingId}/couple-form?step=${prev}`}
-            className="text-sm text-neutral-500 hover:text-neutral-700 flex items-center gap-1"
-          >
+          <Link href={`/weddings/${weddingId}/couple-form?step=${prev}`} className="text-sm text-neutral-500 hover:text-neutral-700 flex items-center gap-1">
             ← Back
           </Link>
         )}
       </div>
       <div className="flex items-center gap-3">
-        {(skipTo !== undefined ? skipTo : next) && skipTo !== null && (
-          <Link
-            href={`/weddings/${weddingId}/couple-form?step=${skipTo ?? next}`}
-            className="text-sm text-neutral-500 hover:text-neutral-700"
-          >
-            {skipLabel}
-          </Link>
-        )}
         {next && (
-          <Link
-            href={`/weddings/${weddingId}/couple-form?step=${next}`}
-            className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-sm"
-          >
-            {nextLabel}
-          </Link>
+          <>
+            <Link href={`/weddings/${weddingId}/couple-form?step=${next}`} className="text-sm text-neutral-500 hover:text-neutral-700">
+              Skip this step
+            </Link>
+            <Link
+              href={`/weddings/${weddingId}/couple-form?step=${next}`}
+              className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-sm"
+            >
+              {nextLabel}
+            </Link>
+          </>
         )}
       </div>
+    </div>
+  )
+}
+
+// ─── Parent step (reusable for bride + groom) ────────────────────────────────
+function ParentStep({
+  side,
+  sideName,
+  otherName,
+  stepLabel,
+  stepNum,
+  currentStep,
+  prev,
+  next,
+  nextLabel,
+  weddingId,
+  added,
+  accentBg,
+  accentBorder,
+  accentFocus,
+  accentBtn,
+  accentText,
+  people,
+}: {
+  side: 'Bride' | 'Groom'
+  sideName: string
+  otherName: string
+  stepLabel: string
+  stepNum: string
+  currentStep: StepId
+  prev: StepId | null
+  next: StepId | null
+  nextLabel: string
+  weddingId: string
+  added: string | undefined
+  accentBg: string
+  accentBorder: string
+  accentFocus: string
+  accentBtn: string
+  accentText: string
+  people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
+}) {
+  if (added) {
+    return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={weddingId} accentClass={`${accentBg} ${accentText}`} />
+  }
+
+  return (
+    <div>
+      <div className="mb-8">
+        <p className={`${accentText} font-medium text-sm uppercase tracking-wider mb-2`}>{stepLabel} · Step {stepNum}</p>
+        <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">{sideName}'s Parents</h1>
+        <p className="text-neutral-600">Start by telling us who {sideName}'s parents are. Skip anyone who won't be at the wedding.</p>
+      </div>
+
+      <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
+        {/* Mom */}
+        <form action={addPerson} className="flex gap-3 items-end">
+          <input type="hidden" name="weddingId" value={weddingId} />
+          <input type="hidden" name="currentStep" value={currentStep} />
+          <input type="hidden" name="side" value={side} />
+          <input type="hidden" name="relationship" value="Mom" />
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-neutral-700 mb-1.5">Mom's full name</label>
+            <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Patricia Smith" />
+          </div>
+          <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}>Add</button>
+        </form>
+
+        {/* Dad */}
+        <form action={addPerson} className="space-y-2">
+          <input type="hidden" name="weddingId" value={weddingId} />
+          <input type="hidden" name="currentStep" value={currentStep} />
+          <input type="hidden" name="side" value={side} />
+          <input type="hidden" name="relationship" value="Dad" />
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Dad's full name</label>
+              <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Robert Smith" />
+            </div>
+            <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}>Add</button>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-neutral-600 pl-1">
+            <input type="checkbox" name="isDivorced" className="w-4 h-4 rounded" />
+            Parents are divorced (we'll plan separate shots)
+          </label>
+        </form>
+
+        {/* Step parents */}
+        <details className="group">
+          <summary className="text-sm font-medium text-neutral-600 cursor-pointer hover:text-neutral-900 list-none flex items-center gap-1.5 select-none">
+            <span className={`${accentText} group-open:rotate-90 transition-transform inline-block`}>▶</span>
+            Add a step-parent
+          </summary>
+          <div className="mt-4 space-y-4 pl-4 border-l-2 border-neutral-200">
+            {['Step Mom', 'Step Dad'].map((rel) => (
+              <form key={rel} action={addPerson} className="flex gap-3 items-end">
+                <input type="hidden" name="weddingId" value={weddingId} />
+                <input type="hidden" name="currentStep" value={currentStep} />
+                <input type="hidden" name="side" value={side} />
+                <input type="hidden" name="relationship" value={rel} />
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-neutral-700 mb-1.5">{rel}'s name</label>
+                  <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="Full name" />
+                </div>
+                <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
+              </form>
+            ))}
+          </div>
+        </details>
+      </div>
+
+      {people.length > 0 && (
+        <div className="mt-6">
+          <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
+          <div className="space-y-2">
+            {people.map((p) => <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} isDivorced={p.isDivorced} />)}
+          </div>
+        </div>
+      )}
+
+      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} />
+    </div>
+  )
+}
+
+// ─── Sibling/Grandparent step (reusable) ────────────────────────────────────
+function FamilyStep({
+  side,
+  sideName,
+  stepLabel,
+  stepNum,
+  currentStep,
+  prev,
+  next,
+  nextLabel,
+  weddingId,
+  added,
+  heading,
+  description,
+  primaryRelationship,
+  secondaryRelationship,
+  primaryPlaceholder,
+  secondaryPlaceholder,
+  accentBg,
+  accentBorder,
+  accentFocus,
+  accentBtn,
+  accentText,
+  people,
+}: {
+  side: 'Bride' | 'Groom'
+  sideName: string
+  stepLabel: string
+  stepNum: string
+  currentStep: StepId
+  prev: StepId | null
+  next: StepId | null
+  nextLabel: string
+  weddingId: string
+  added: string | undefined
+  heading: string
+  description: string
+  primaryRelationship: string
+  secondaryRelationship?: string
+  primaryPlaceholder: string
+  secondaryPlaceholder?: string
+  accentBg: string
+  accentBorder: string
+  accentFocus: string
+  accentBtn: string
+  accentText: string
+  people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
+}) {
+  if (added) {
+    return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={weddingId} accentClass={`${accentBg} ${accentText}`} />
+  }
+
+  return (
+    <div>
+      <div className="mb-8">
+        <p className={`${accentText} font-medium text-sm uppercase tracking-wider mb-2`}>{stepLabel} · Step {stepNum}</p>
+        <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">{heading}</h1>
+        <p className="text-neutral-600">{description}</p>
+      </div>
+
+      <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
+        <form action={addPerson} className="flex gap-3 items-end">
+          <input type="hidden" name="weddingId" value={weddingId} />
+          <input type="hidden" name="currentStep" value={currentStep} />
+          <input type="hidden" name="side" value={side} />
+          <input type="hidden" name="relationship" value={primaryRelationship} />
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-neutral-700 mb-1.5">{primaryRelationship}'s full name</label>
+            <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder={primaryPlaceholder} />
+          </div>
+          <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
+        </form>
+
+        {secondaryRelationship && secondaryPlaceholder && (
+          <form action={addPerson} className="flex gap-3 items-end">
+            <input type="hidden" name="weddingId" value={weddingId} />
+            <input type="hidden" name="currentStep" value={currentStep} />
+            <input type="hidden" name="side" value={side} />
+            <input type="hidden" name="relationship" value={secondaryRelationship} />
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">
+                {secondaryRelationship} <span className="text-neutral-400 font-normal">(optional)</span>
+              </label>
+              <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder={secondaryPlaceholder} />
+            </div>
+            <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
+          </form>
+        )}
+      </div>
+
+      {people.length > 0 && (
+        <div className="mt-6">
+          <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
+          <div className="space-y-2">
+            {people.map((p) => <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />)}
+          </div>
+        </div>
+      )}
+
+      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} />
     </div>
   )
 }
@@ -183,13 +523,15 @@ export default async function CoupleFormPage({
   searchParams,
 }: {
   params: { id: string }
-  searchParams: { step?: string }
+  searchParams: { step?: string; added?: string }
 }) {
   const wedding = await prisma.wedding.findUnique({
     where: { id: params.id },
     include: {
-      people: {
-        orderBy: [{ relationship: 'asc' }, { fullName: 'asc' }],
+      people: { orderBy: [{ relationship: 'asc' }, { fullName: 'asc' }] },
+      photoGroups: {
+        include: { people: { include: { person: true } } },
+        orderBy: { orderNum: 'asc' },
       },
     },
   })
@@ -201,667 +543,309 @@ export default async function CoupleFormPage({
     ? (rawStep as StepId)
     : 'intro'
 
+  const added = searchParams.added as string | undefined
   const { prev, next } = getAdjacentSteps(currentStep)
 
-  // Helpers to filter people by side + relationship
-  const byCategory = (side: 'Bride' | 'Groom', ...relationships: string[]) =>
-    wedding.people.filter(
-      (p) => p.side === side && relationships.includes(p.relationship)
-    )
+  const byCategory = (side: 'Bride' | 'Groom', ...rels: string[]) =>
+    wedding.people.filter((p) => p.side === side && rels.includes(p.relationship))
 
-  const brideName = wedding.brideName
-  const groomName = wedding.groomName
+  const { brideName, groomName } = wedding
 
-  const stepColor = (step: StepId) => {
-    if (step.startsWith('bride')) return 'bride'
-    if (step.startsWith('groom')) return 'groom'
-    return 'neutral'
+  // Styling per side
+  const brideStyles = {
+    accentBg: 'bg-rose-50',
+    accentBorder: 'border-rose-100',
+    accentFocus: 'focus:ring-rose-400',
+    accentBtn: 'bg-rose-500 hover:bg-rose-600',
+    accentText: 'text-rose-600',
   }
-  const color = stepColor(currentStep)
-  const accentBg = color === 'bride' ? 'bg-rose-50' : color === 'groom' ? 'bg-sky-50' : 'bg-neutral-50'
-  const accentBorder = color === 'bride' ? 'border-rose-100' : color === 'groom' ? 'border-sky-100' : 'border-neutral-100'
-  const accentBtn = color === 'bride' ? 'bg-rose-500 hover:bg-rose-600' : color === 'groom' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-neutral-700 hover:bg-neutral-800'
+  const groomStyles = {
+    accentBg: 'bg-sky-50',
+    accentBorder: 'border-sky-100',
+    accentFocus: 'focus:ring-sky-400',
+    accentBtn: 'bg-sky-600 hover:bg-sky-700',
+    accentText: 'text-sky-600',
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-stone-50 to-white">
       {/* Top bar */}
       <div className="border-b border-neutral-100 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center justify-between">
-          <p className="font-display text-lg text-neutral-800">
-            {brideName} & {groomName}
-          </p>
+          <p className="font-display text-lg text-neutral-800">{brideName} & {groomName}</p>
           {wedding.weddingDate && (
             <p className="text-sm text-neutral-500">
-              {new Date(wedding.weddingDate).toLocaleDateString('en-US', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-              })}
+              {new Date(wedding.weddingDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
           )}
         </div>
       </div>
 
       <div className="max-w-2xl mx-auto px-4 py-10">
-        <ProgressDots
-          currentStep={currentStep}
-          brideName={brideName}
-          groomName={groomName}
-        />
+        <ProgressDots currentStep={currentStep} brideName={brideName} groomName={groomName} />
 
         {/* ── INTRO ─────────────────────────────────────────────────────── */}
         {currentStep === 'intro' && (
           <div className="text-center">
             <div className="text-5xl mb-6">💐</div>
-            <h1 className="font-display text-4xl sm:text-5xl font-bold text-neutral-900 mb-3">
-              Let's Build Your Photo List
-            </h1>
-            <p className="text-xl text-neutral-600 mb-2">
-              {brideName} & {groomName}
-            </p>
+            <h1 className="font-display text-4xl sm:text-5xl font-bold text-neutral-900 mb-3">Let's Build Your Photo List</h1>
+            <p className="text-xl text-neutral-600 mb-2">{brideName} & {groomName}</p>
             {wedding.weddingDate && (
               <p className="text-neutral-500 mb-8">
-                {new Date(wedding.weddingDate).toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  month: 'long',
-                  day: 'numeric',
-                  year: 'numeric',
-                })}
+                {new Date(wedding.weddingDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
               </p>
             )}
-
             <div className="bg-rose-50 border border-rose-100 rounded-2xl p-6 mb-10 text-left">
               <h2 className="font-semibold text-neutral-900 mb-3">Here's how this works 👋</h2>
               <ul className="space-y-2 text-neutral-700">
-                <li className="flex items-start gap-2">
-                  <span className="text-rose-400 mt-0.5">✦</span>
-                  We'll walk you through each part of your family, one step at a time.
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-rose-400 mt-0.5">✦</span>
-                  You can skip any section that doesn't apply to you.
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-rose-400 mt-0.5">✦</span>
-                  At the end, you can add anyone we missed.
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-rose-400 mt-0.5">✦</span>
-                  Takes about 5 minutes — your photographer will handle the rest!
-                </li>
+                <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>We'll walk you through each part of your family, one step at a time.</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>You can skip any section that doesn't apply.</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>At the end, we'll build your photo list together so you can review it.</li>
+                <li className="flex items-start gap-2"><span className="text-rose-400 mt-0.5">✦</span>Takes about 5 minutes — your photographer handles the rest!</li>
               </ul>
             </div>
-
-            <Link
-              href={`/weddings/${wedding.id}/couple-form?step=bride-parents`}
-              className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-8 py-4 rounded-2xl font-semibold text-lg transition-colors shadow-md"
-            >
+            <Link href={`/weddings/${wedding.id}/couple-form?step=bride-parents`} className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-8 py-4 rounded-2xl font-semibold text-lg transition-colors shadow-md">
               Let's Start
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-              </svg>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </Link>
           </div>
         )}
 
         {/* ── BRIDE PARENTS ─────────────────────────────────────────────── */}
-        {currentStep === 'bride-parents' && (() => {
-          const added = byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-rose-500 font-medium text-sm uppercase tracking-wider mb-2">
-                  {brideName}'s Family · Step 1 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {brideName}'s Parents
-                </h1>
-                <p className="text-neutral-600">
-                  Start by telling us who {brideName}'s parents are. Skip anyone who won't be at the wedding.
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
-                {/* Mom */}
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Bride" />
-                  <input type="hidden" name="relationship" value="Mom" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                      Mom's full name
-                    </label>
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                      placeholder="e.g. Patricia Smith"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}
-                  >
-                    Add
-                  </button>
-                </form>
-
-                {/* Dad */}
-                <form action={addPerson} className="space-y-2">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Bride" />
-                  <input type="hidden" name="relationship" value="Dad" />
-                  <div className="flex gap-3 items-end">
-                    <div className="flex-1">
-                      <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                        Dad's full name
-                      </label>
-                      <input
-                        type="text"
-                        name="fullName"
-                        className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                        placeholder="e.g. Robert Smith"
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}
-                    >
-                      Add
-                    </button>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-neutral-600 pl-1">
-                    <input type="checkbox" name="isDivorced" className="w-4 h-4 rounded text-rose-500" />
-                    Parents are divorced (we'll plan separate shots)
-                  </label>
-                </form>
-
-                {/* Step parents */}
-                <details className="group">
-                  <summary className="text-sm font-medium text-neutral-600 cursor-pointer hover:text-neutral-900 list-none flex items-center gap-1.5 select-none">
-                    <span className="text-rose-400 group-open:rotate-90 transition-transform inline-block">▶</span>
-                    Add a step-parent
-                  </summary>
-                  <div className="mt-4 space-y-4 pl-4 border-l-2 border-rose-100">
-                    <form action={addPerson} className="flex gap-3 items-end">
-                      <input type="hidden" name="weddingId" value={wedding.id} />
-                      <input type="hidden" name="side" value="Bride" />
-                      <input type="hidden" name="relationship" value="Step Mom" />
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Step-Mom's name</label>
-                        <input
-                          type="text"
-                          name="fullName"
-                          className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                          placeholder="e.g. Sandra Miller"
-                        />
-                      </div>
-                      <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                    </form>
-                    <form action={addPerson} className="flex gap-3 items-end">
-                      <input type="hidden" name="weddingId" value={wedding.id} />
-                      <input type="hidden" name="side" value="Bride" />
-                      <input type="hidden" name="relationship" value="Step Dad" />
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Step-Dad's name</label>
-                        <input
-                          type="text"
-                          name="fullName"
-                          className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                          placeholder="e.g. James Miller"
-                        />
-                      </div>
-                      <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                    </form>
-                  </div>
-                </details>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} isDivorced={p.isDivorced} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel={`Next: ${groomName}'s Parents →`} />
-            </div>
-          )
-        })()}
+        {currentStep === 'bride-parents' && (
+          <ParentStep
+            side="Bride" sideName={brideName} otherName={groomName}
+            stepLabel={`${brideName}'s Family`} stepNum="1 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel={`Next: ${groomName}'s Parents →`}
+            weddingId={wedding.id} added={added}
+            people={byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
+            {...brideStyles}
+          />
+        )}
 
         {/* ── GROOM PARENTS ─────────────────────────────────────────────── */}
-        {currentStep === 'groom-parents' && (() => {
-          const added = byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-sky-600 font-medium text-sm uppercase tracking-wider mb-2">
-                  {groomName}'s Family · Step 2 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {groomName}'s Parents
-                </h1>
-                <p className="text-neutral-600">
-                  Now let's add {groomName}'s parents. Skip anyone who won't be at the wedding.
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Groom" />
-                  <input type="hidden" name="relationship" value="Mom" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">Mom's full name</label>
-                    <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. Linda Johnson" />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-
-                <form action={addPerson} className="space-y-2">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Groom" />
-                  <input type="hidden" name="relationship" value="Dad" />
-                  <div className="flex gap-3 items-end">
-                    <div className="flex-1">
-                      <label className="block text-sm font-medium text-neutral-700 mb-1.5">Dad's full name</label>
-                      <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. William Johnson" />
-                    </div>
-                    <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-neutral-600 pl-1">
-                    <input type="checkbox" name="isDivorced" className="w-4 h-4 rounded text-sky-500" />
-                    Parents are divorced (we'll plan separate shots)
-                  </label>
-                </form>
-
-                <details className="group">
-                  <summary className="text-sm font-medium text-neutral-600 cursor-pointer hover:text-neutral-900 list-none flex items-center gap-1.5 select-none">
-                    <span className="text-sky-400 group-open:rotate-90 transition-transform inline-block">▶</span>
-                    Add a step-parent
-                  </summary>
-                  <div className="mt-4 space-y-4 pl-4 border-l-2 border-sky-100">
-                    <form action={addPerson} className="flex gap-3 items-end">
-                      <input type="hidden" name="weddingId" value={wedding.id} />
-                      <input type="hidden" name="side" value="Groom" />
-                      <input type="hidden" name="relationship" value="Step Mom" />
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Step-Mom's name</label>
-                        <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. Carol Davis" />
-                      </div>
-                      <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                    </form>
-                    <form action={addPerson} className="flex gap-3 items-end">
-                      <input type="hidden" name="weddingId" value={wedding.id} />
-                      <input type="hidden" name="side" value="Groom" />
-                      <input type="hidden" name="relationship" value="Step Dad" />
-                      <div className="flex-1">
-                        <label className="block text-sm font-medium text-neutral-700 mb-1.5">Step-Dad's name</label>
-                        <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. Mark Davis" />
-                      </div>
-                      <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                    </form>
-                  </div>
-                </details>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} isDivorced={p.isDivorced} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel={`Next: ${brideName}'s Siblings →`} />
-            </div>
-          )
-        })()}
+        {currentStep === 'groom-parents' && (
+          <ParentStep
+            side="Groom" sideName={groomName} otherName={brideName}
+            stepLabel={`${groomName}'s Family`} stepNum="2 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel={`Next: ${brideName}'s Siblings →`}
+            weddingId={wedding.id} added={added}
+            people={byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
+            {...groomStyles}
+          />
+        )}
 
         {/* ── BRIDE SIBLINGS ────────────────────────────────────────────── */}
-        {currentStep === 'bride-siblings' && (() => {
-          const added = byCategory('Bride', 'Sibling', 'Sibling Spouse/Partner')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-rose-500 font-medium text-sm uppercase tracking-wider mb-2">
-                  {brideName}'s Family · Step 3 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {brideName}'s Siblings
-                </h1>
-                <p className="text-neutral-600">
-                  Add {brideName}'s brothers and sisters, and their partners if they'll be in photos. You can add as many as you like.
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Bride" />
-                  <input type="hidden" name="relationship" value="Sibling" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">Sibling's full name</label>
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                      placeholder="e.g. Emily Smith"
-                    />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Bride" />
-                  <input type="hidden" name="relationship" value="Sibling Spouse/Partner" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                      A sibling's spouse / partner
-                      <span className="text-neutral-400 font-normal ml-1">(optional)</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                      placeholder="e.g. Tom Williams"
-                    />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel={`Next: ${groomName}'s Siblings →`} />
-            </div>
-          )
-        })()}
+        {currentStep === 'bride-siblings' && (
+          <FamilyStep
+            side="Bride" sideName={brideName}
+            stepLabel={`${brideName}'s Family`} stepNum="3 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel={`Next: ${groomName}'s Siblings →`}
+            weddingId={wedding.id} added={added}
+            heading={`${brideName}'s Siblings`}
+            description={`Add ${brideName}'s brothers and sisters, and their partners if they'll be in photos.`}
+            primaryRelationship="Sibling"
+            primaryPlaceholder="e.g. Emily Smith"
+            secondaryRelationship="Sibling Spouse/Partner"
+            secondaryPlaceholder="e.g. Tom Williams (Emily's partner)"
+            people={byCategory('Bride', 'Sibling', 'Sibling Spouse/Partner')}
+            {...brideStyles}
+          />
+        )}
 
         {/* ── GROOM SIBLINGS ────────────────────────────────────────────── */}
-        {currentStep === 'groom-siblings' && (() => {
-          const added = byCategory('Groom', 'Sibling', 'Sibling Spouse/Partner')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-sky-600 font-medium text-sm uppercase tracking-wider mb-2">
-                  {groomName}'s Family · Step 4 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {groomName}'s Siblings
-                </h1>
-                <p className="text-neutral-600">
-                  Add {groomName}'s brothers and sisters, and their partners if they'll be in photos.
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Groom" />
-                  <input type="hidden" name="relationship" value="Sibling" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">Sibling's full name</label>
-                    <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. Michael Johnson" />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Groom" />
-                  <input type="hidden" name="relationship" value="Sibling Spouse/Partner" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">
-                      A sibling's spouse / partner
-                      <span className="text-neutral-400 font-normal ml-1">(optional)</span>
-                    </label>
-                    <input type="text" name="fullName" className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base" placeholder="e.g. Sarah Johnson" />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel={`Next: ${brideName}'s Grandparents →`} />
-            </div>
-          )
-        })()}
+        {currentStep === 'groom-siblings' && (
+          <FamilyStep
+            side="Groom" sideName={groomName}
+            stepLabel={`${groomName}'s Family`} stepNum="4 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel={`Next: ${brideName}'s Grandparents →`}
+            weddingId={wedding.id} added={added}
+            heading={`${groomName}'s Siblings`}
+            description={`Add ${groomName}'s brothers and sisters, and their partners if they'll be in photos.`}
+            primaryRelationship="Sibling"
+            primaryPlaceholder="e.g. Michael Johnson"
+            secondaryRelationship="Sibling Spouse/Partner"
+            secondaryPlaceholder="e.g. Sarah Johnson (Michael's partner)"
+            people={byCategory('Groom', 'Sibling', 'Sibling Spouse/Partner')}
+            {...groomStyles}
+          />
+        )}
 
         {/* ── BRIDE GRANDPARENTS ────────────────────────────────────────── */}
-        {currentStep === 'bride-grandparents' && (() => {
-          const added = byCategory('Bride', 'Grandparent')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-rose-500 font-medium text-sm uppercase tracking-wider mb-2">
-                  {brideName}'s Family · Step 5 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {brideName}'s Grandparents
-                </h1>
-                <p className="text-neutral-600">
-                  Will any grandparents be attending? Add them here so we can make sure they're included.
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6`}>
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Bride" />
-                  <input type="hidden" name="relationship" value="Grandparent" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">Grandparent's full name</label>
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-base"
-                      placeholder="e.g. Dorothy Smith"
-                    />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel={`Next: ${groomName}'s Grandparents →`} />
-            </div>
-          )
-        })()}
+        {currentStep === 'bride-grandparents' && (
+          <FamilyStep
+            side="Bride" sideName={brideName}
+            stepLabel={`${brideName}'s Family`} stepNum="5 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel={`Next: ${groomName}'s Grandparents →`}
+            weddingId={wedding.id} added={added}
+            heading={`${brideName}'s Grandparents`}
+            description="Will any grandparents be there? Add them so we make sure they're included."
+            primaryRelationship="Grandparent"
+            primaryPlaceholder="e.g. Dorothy Smith"
+            people={byCategory('Bride', 'Grandparent')}
+            {...brideStyles}
+          />
+        )}
 
         {/* ── GROOM GRANDPARENTS ────────────────────────────────────────── */}
-        {currentStep === 'groom-grandparents' && (() => {
-          const added = byCategory('Groom', 'Grandparent')
-          return (
-            <div>
-              <div className="mb-8">
-                <p className="text-sky-600 font-medium text-sm uppercase tracking-wider mb-2">
-                  {groomName}'s Family · Step 6 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  {groomName}'s Grandparents
-                </h1>
-                <p className="text-neutral-600">
-                  Will any of {groomName}'s grandparents be at the wedding?
-                </p>
-              </div>
-
-              <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6`}>
-                <form action={addPerson} className="flex gap-3 items-end">
-                  <input type="hidden" name="weddingId" value={wedding.id} />
-                  <input type="hidden" name="side" value="Groom" />
-                  <input type="hidden" name="relationship" value="Grandparent" />
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">Grandparent's full name</label>
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-4 py-3 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-base"
-                      placeholder="e.g. Harold Johnson"
-                    />
-                  </div>
-                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-                </form>
-              </div>
-
-              {added.length > 0 && (
-                <div className="mt-6">
-                  <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-                  <div className="space-y-2">
-                    {added.map((p) => (
-                      <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel="Next: Anyone Else? →" />
-            </div>
-          )
-        })()}
+        {currentStep === 'groom-grandparents' && (
+          <FamilyStep
+            side="Groom" sideName={groomName}
+            stepLabel={`${groomName}'s Family`} stepNum="6 of 7"
+            currentStep={currentStep} prev={prev} next={next}
+            nextLabel="Next: Anyone Else? →"
+            weddingId={wedding.id} added={added}
+            heading={`${groomName}'s Grandparents`}
+            description={`Will any of ${groomName}'s grandparents be at the wedding?`}
+            primaryRelationship="Grandparent"
+            primaryPlaceholder="e.g. Harold Johnson"
+            people={byCategory('Groom', 'Grandparent')}
+            {...groomStyles}
+          />
+        )}
 
         {/* ── EXTRAS ────────────────────────────────────────────────────── */}
         {currentStep === 'extras' && (() => {
-          const EXTRA_RELATIONSHIPS = ['Aunt/Uncle', 'Cousin', 'Friend', 'Other']
+          const EXTRA_RELS = ['Aunt/Uncle', 'Cousin', 'Friend', 'Other']
           const brideSide = wedding.people.filter((p) => p.side === 'Bride')
           const groomSide = wedding.people.filter((p) => p.side === 'Groom')
+
+          if (added) {
+            return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={wedding.id} accentClass="bg-neutral-100 text-neutral-700" />
+          }
 
           return (
             <div>
               <div className="mb-8">
-                <p className="text-neutral-500 font-medium text-sm uppercase tracking-wider mb-2">
-                  Almost done · Step 7 of 7
-                </p>
-                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">
-                  Anyone Else?
-                </h1>
-                <p className="text-neutral-600">
-                  Aunts, uncles, cousins, close friends — add anyone else who should be in family photos.
-                </p>
+                <p className="text-neutral-500 font-medium text-sm uppercase tracking-wider mb-2">Almost done · Step 7 of 7</p>
+                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">Anyone Else?</h1>
+                <p className="text-neutral-600">Aunts, uncles, cousins, close friends — anyone else who should be in family photos.</p>
               </div>
 
               <div className="grid sm:grid-cols-2 gap-4 mb-8">
-                {/* Bride side */}
-                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-5">
-                  <h3 className="font-semibold text-rose-700 mb-4">{brideName}'s Side</h3>
-                  <form action={addPerson} className="space-y-3">
-                    <input type="hidden" name="weddingId" value={wedding.id} />
-                    <input type="hidden" name="side" value="Bride" />
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-sm"
-                      placeholder="Full name"
-                    />
-                    <select
-                      name="relationship"
-                      required
-                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-rose-400 bg-white text-sm"
-                    >
-                      <option value="">Relationship...</option>
-                      {EXTRA_RELATIONSHIPS.map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="submit"
-                      className="w-full bg-rose-500 hover:bg-rose-600 text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
-                    >
-                      + Add to {brideName}'s side
-                    </button>
-                  </form>
-                  {brideSide.length > 0 && (
-                    <div className="mt-4 space-y-1.5">
-                      {brideSide.map((p) => (
-                        <div key={p.id} className="text-xs text-neutral-700 bg-white rounded-lg px-3 py-2 border border-neutral-100">
-                          <span className="font-medium">{p.fullName}</span>
-                          <span className="text-neutral-400 ml-1">· {p.relationship}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Groom side */}
-                <div className="bg-sky-50 border border-sky-100 rounded-2xl p-5">
-                  <h3 className="font-semibold text-sky-700 mb-4">{groomName}'s Side</h3>
-                  <form action={addPerson} className="space-y-3">
-                    <input type="hidden" name="weddingId" value={wedding.id} />
-                    <input type="hidden" name="side" value="Groom" />
-                    <input
-                      type="text"
-                      name="fullName"
-                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-sm"
-                      placeholder="Full name"
-                    />
-                    <select
-                      name="relationship"
-                      required
-                      className="w-full px-3 py-2.5 rounded-xl border border-neutral-200 focus:outline-none focus:ring-2 focus:ring-sky-400 bg-white text-sm"
-                    >
-                      <option value="">Relationship...</option>
-                      {EXTRA_RELATIONSHIPS.map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                    <button
-                      type="submit"
-                      className="w-full bg-sky-600 hover:bg-sky-700 text-white py-2.5 rounded-xl text-sm font-medium transition-colors"
-                    >
-                      + Add to {groomName}'s side
-                    </button>
-                  </form>
-                  {groomSide.length > 0 && (
-                    <div className="mt-4 space-y-1.5">
-                      {groomSide.map((p) => (
-                        <div key={p.id} className="text-xs text-neutral-700 bg-white rounded-lg px-3 py-2 border border-neutral-100">
-                          <span className="font-medium">{p.fullName}</span>
-                          <span className="text-neutral-400 ml-1">· {p.relationship}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {[
+                  { label: `${brideName}'s Side`, side: 'Bride', people: brideSide, bg: 'bg-rose-50', border: 'border-rose-100', focus: 'focus:ring-rose-400', btn: 'bg-rose-500 hover:bg-rose-600', text: 'text-rose-700' },
+                  { label: `${groomName}'s Side`, side: 'Groom', people: groomSide, bg: 'bg-sky-50', border: 'border-sky-100', focus: 'focus:ring-sky-400', btn: 'bg-sky-600 hover:bg-sky-700', text: 'text-sky-700' },
+                ].map(({ label, side, people, bg, border, focus, btn, text }) => (
+                  <div key={side} className={`${bg} ${border} border rounded-2xl p-5`}>
+                    <h3 className={`font-semibold ${text} mb-4`}>{label}</h3>
+                    <form action={addPerson} className="space-y-3">
+                      <input type="hidden" name="weddingId" value={wedding.id} />
+                      <input type="hidden" name="currentStep" value={currentStep} />
+                      <input type="hidden" name="side" value={side} />
+                      <input type="text" name="fullName" className={`w-full px-3 py-2.5 rounded-xl border border-neutral-200 ${focus} bg-white text-sm focus:outline-none focus:ring-2`} placeholder="Full name" />
+                      <select name="relationship" required className={`w-full px-3 py-2.5 rounded-xl border border-neutral-200 ${focus} bg-white text-sm focus:outline-none focus:ring-2`}>
+                        <option value="">Relationship...</option>
+                        {EXTRA_RELS.map((r) => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                      <button type="submit" className={`w-full ${btn} text-white py-2.5 rounded-xl text-sm font-medium transition-colors`}>+ Add to {side === 'Bride' ? brideName : groomName}'s side</button>
+                    </form>
+                    {people.length > 0 && (
+                      <div className="mt-4 space-y-1.5">
+                        {people.map((p) => (
+                          <div key={p.id} className="text-xs text-neutral-700 bg-white rounded-lg px-3 py-2 border border-neutral-100">
+                            <span className="font-medium">{p.fullName}</span>
+                            <span className="text-neutral-400 ml-1">· {p.relationship}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
 
-              <StepNav weddingId={wedding.id} prev={prev} next={next} nextLabel="I'm done! →" skipLabel="Skip — I'm done" />
+              <div className="flex items-center justify-between pt-6 border-t border-neutral-100">
+                <Link href={`/weddings/${wedding.id}/couple-form?step=${prev}`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
+                <form action={generateAndReview}>
+                  <input type="hidden" name="weddingId" value={wedding.id} />
+                  <button type="submit" className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors shadow-sm">
+                    Build Our Photo List →
+                  </button>
+                </form>
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* ── PHOTO REVIEW ──────────────────────────────────────────────── */}
+        {currentStep === 'photo-review' && (() => {
+          const brideGroups = wedding.photoGroups.filter((g) => g.side === 'Bride')
+          const groomGroups = wedding.photoGroups.filter((g) => g.side === 'Groom')
+          const mixedGroups = wedding.photoGroups.filter((g) => g.side === 'Mixed')
+
+          const renderGroup = (group: typeof wedding.photoGroups[0]) => {
+            const people = group.people.map((p) => {
+              if (p.personId === 'bride') return brideName
+              if (p.personId === 'groom') return groomName
+              return p.person?.fullName ?? '?'
+            })
+            return (
+              <div key={group.id} className="flex items-start gap-3 bg-white border border-neutral-200 rounded-xl px-4 py-3 hover:border-neutral-300 transition-colors group">
+                <div className="flex-1 min-w-0 pt-0.5">
+                  <p className="font-medium text-neutral-900 text-sm">{group.groupName}</p>
+                  {people.length > 0 && (
+                    <p className="text-xs text-neutral-500 mt-0.5 truncate">{people.join(', ')}</p>
+                  )}
+                </div>
+                <form action={removeGroup}>
+                  <input type="hidden" name="groupId" value={group.id} />
+                  <input type="hidden" name="weddingId" value={wedding.id} />
+                  <button type="submit" className="opacity-0 group-hover:opacity-100 text-xs text-neutral-400 hover:text-red-500 transition-all px-2 py-1 rounded flex-shrink-0 mt-0.5">
+                    Remove
+                  </button>
+                </form>
+              </div>
+            )
+          }
+
+          const renderSection = (title: string, groups: typeof wedding.photoGroups, dot: string) => {
+            if (groups.length === 0) return null
+            return (
+              <div className="mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className={`w-2 h-2 rounded-full ${dot}`} />
+                  <h3 className="font-semibold text-neutral-700 text-sm">{title}</h3>
+                  <span className="text-xs text-neutral-400">{groups.length} shots</span>
+                </div>
+                <div className="space-y-2">{groups.map(renderGroup)}</div>
+              </div>
+            )
+          }
+
+          return (
+            <div>
+              <div className="mb-8 text-center">
+                <div className="text-4xl mb-4">📷</div>
+                <h1 className="font-display text-4xl font-bold text-neutral-900 mb-2">Your Photo List</h1>
+                <p className="text-neutral-600 max-w-md mx-auto">
+                  We've put together shots based on your family. Remove anything that doesn't feel right — your photographer will help you finalize the rest.
+                </p>
+              </div>
+
+              <div className="bg-white border border-neutral-200 rounded-2xl p-6 mb-6">
+                {renderSection(`${brideName}'s Family`, brideGroups, 'bg-rose-400')}
+                {renderSection(`${groomName}'s Family`, groomGroups, 'bg-sky-400')}
+                {renderSection('Together', mixedGroups, 'bg-purple-400')}
+                {wedding.photoGroups.length === 0 && (
+                  <p className="text-neutral-500 text-center py-4">No photo groups yet. Go back and add your family first.</p>
+                )}
+              </div>
+
+              <div className="text-center text-xs text-neutral-400 mb-6">
+                Hover over any shot to remove it · Your photographer may add more
+              </div>
+
+              <div className="flex items-center justify-between">
+                <Link href={`/weddings/${wedding.id}/couple-form?step=extras`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
+                <Link href={`/weddings/${wedding.id}/couple-form?step=done`} className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors shadow-sm">
+                  Looks Great! →
+                </Link>
+              </div>
             </div>
           )
         })()}
@@ -871,7 +855,7 @@ export default async function CoupleFormPage({
           const brideSide = wedding.people.filter((p) => p.side === 'Bride')
           const groomSide = wedding.people.filter((p) => p.side === 'Groom')
 
-          const groupByRelationship = (people: typeof wedding.people) => {
+          const groupByRel = (people: typeof wedding.people) => {
             const order = ['Mom', 'Dad', 'Step Mom', 'Step Dad', 'Sibling', 'Sibling Spouse/Partner', 'Grandparent', 'Aunt/Uncle', 'Cousin', 'Friend', 'Other']
             const grouped: Record<string, typeof people> = {}
             for (const p of people) {
@@ -884,11 +868,9 @@ export default async function CoupleFormPage({
           return (
             <div className="text-center">
               <div className="text-6xl mb-4">🎉</div>
-              <h1 className="font-display text-4xl sm:text-5xl font-bold text-neutral-900 mb-3">
-                You're all set!
-              </h1>
+              <h1 className="font-display text-4xl sm:text-5xl font-bold text-neutral-900 mb-3">You're all set!</h1>
               <p className="text-lg text-neutral-600 mb-8">
-                Your photographer will use this list to make sure every important person gets the perfect photo.
+                Your photographer will use this to make sure every important person gets the perfect shot.
               </p>
 
               {wedding.people.length > 0 && (
@@ -897,57 +879,40 @@ export default async function CoupleFormPage({
                     Your Family List ({wedding.people.length} people)
                   </h2>
                   <div className="grid sm:grid-cols-2 gap-6">
-                    <div>
-                      <h3 className="font-semibold text-rose-600 mb-3 text-center bg-rose-50 rounded-xl py-2">
-                        {brideName}'s Family · {brideSide.length}
-                      </h3>
-                      {groupByRelationship(brideSide).map(({ relationship, people }) => (
-                        <div key={relationship} className="mb-3">
-                          <p className="text-xs text-neutral-400 uppercase tracking-wider mb-1 px-1">{relationship}</p>
-                          {people.map((p) => (
-                            <div key={p.id} className="text-sm text-neutral-800 py-1.5 px-3 bg-rose-50/50 rounded-lg mb-1">
-                              {p.fullName}
-                              {p.isDivorced && <span className="text-xs text-amber-600 ml-2">divorced</span>}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div>
-                      <h3 className="font-semibold text-sky-600 mb-3 text-center bg-sky-50 rounded-xl py-2">
-                        {groomName}'s Family · {groomSide.length}
-                      </h3>
-                      {groupByRelationship(groomSide).map(({ relationship, people }) => (
-                        <div key={relationship} className="mb-3">
-                          <p className="text-xs text-neutral-400 uppercase tracking-wider mb-1 px-1">{relationship}</p>
-                          {people.map((p) => (
-                            <div key={p.id} className="text-sm text-neutral-800 py-1.5 px-3 bg-sky-50/50 rounded-lg mb-1">
-                              {p.fullName}
-                              {p.isDivorced && <span className="text-xs text-amber-600 ml-2">divorced</span>}
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
+                    {[
+                      { name: brideName, side: brideSide, bg: 'bg-rose-50', text: 'text-rose-600', itemBg: 'bg-rose-50/50' },
+                      { name: groomName, side: groomSide, bg: 'bg-sky-50', text: 'text-sky-600', itemBg: 'bg-sky-50/50' },
+                    ].map(({ name, side, bg, text, itemBg }) => (
+                      <div key={name}>
+                        <h3 className={`font-semibold ${text} mb-3 text-center ${bg} rounded-xl py-2`}>
+                          {name}'s Family · {side.length}
+                        </h3>
+                        {groupByRel(side).map(({ relationship, people }) => (
+                          <div key={relationship} className="mb-3">
+                            <p className="text-xs text-neutral-400 uppercase tracking-wider mb-1 px-1">{relationship}</p>
+                            {people.map((p) => (
+                              <div key={p.id} className={`text-sm text-neutral-800 py-1.5 px-3 ${itemBg} rounded-lg mb-1`}>
+                                {p.fullName}
+                                {p.isDivorced && <span className="text-xs text-amber-600 ml-2">divorced</span>}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
               <div className="bg-stone-50 border border-neutral-200 rounded-2xl p-6 text-left mb-6">
                 <p className="text-neutral-700 mb-2">
-                  ✨ <strong>Need to make changes?</strong> Just bookmark this page — you can come back anytime to add or update your list before the wedding.
+                  ✨ <strong>Need to make changes?</strong> Bookmark this page — you can come back anytime before the wedding.
                 </p>
-                <p className="text-sm text-neutral-500">
-                  Have questions? Don't hesitate to reach out to your photographer directly.
-                </p>
+                <p className="text-sm text-neutral-500">Questions? Don't hesitate to reach out to your photographer directly.</p>
               </div>
 
-              <Link
-                href={`/weddings/${wedding.id}/couple-form?step=extras`}
-                className="text-sm text-neutral-500 hover:text-neutral-700"
-              >
-                ← Go back and add someone
+              <Link href={`/weddings/${wedding.id}/couple-form?step=photo-review`} className="text-sm text-neutral-500 hover:text-neutral-700">
+                ← Review photo list
               </Link>
             </div>
           )
