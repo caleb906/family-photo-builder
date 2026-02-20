@@ -20,20 +20,37 @@ const STEP_IDS = [
 
 type StepId = (typeof STEP_IDS)[number]
 
-function getAdjacentSteps(stepId: StepId) {
-  const idx = STEP_IDS.indexOf(stepId)
+const BRIDE_STEPS: StepId[] = ['intro', 'bride-parents', 'bride-siblings', 'bride-grandparents', 'extras', 'photo-review', 'done']
+const GROOM_STEPS: StepId[] = ['intro', 'groom-parents', 'groom-siblings', 'groom-grandparents', 'extras', 'photo-review', 'done']
+
+function getAdjacentSteps(stepId: StepId, flow?: string) {
+  const steps = flow === 'bride' ? BRIDE_STEPS : flow === 'groom' ? GROOM_STEPS : [...STEP_IDS]
+  const idx = steps.indexOf(stepId)
+  if (idx === -1) {
+    // step not in this flow (e.g. groom step while flow=bride) — fall back to full list
+    const fullIdx = STEP_IDS.indexOf(stepId)
+    return {
+      prev: fullIdx > 0 ? STEP_IDS[fullIdx - 1] : null,
+      next: fullIdx < STEP_IDS.length - 1 ? STEP_IDS[fullIdx + 1] : null,
+    }
+  }
   return {
-    prev: idx > 0 ? STEP_IDS[idx - 1] : null,
-    next: idx < STEP_IDS.length - 1 ? STEP_IDS[idx + 1] : null,
+    prev: idx > 0 ? steps[idx - 1] : null,
+    next: idx < steps.length - 1 ? steps[idx + 1] : null,
   }
 }
 
 // ─── Server actions ──────────────────────────────────────────────────────────
 
+function flowSuffix(flow: string | null | undefined) {
+  return flow ? `&flow=${flow}` : ''
+}
+
 async function addPerson(formData: FormData) {
   'use server'
   const weddingId = formData.get('weddingId') as string
   const currentStep = (formData.get('currentStep') as string) || 'intro'
+  const flow = formData.get('flow') as string | null
   const fullName = (formData.get('fullName') as string)?.trim()
   const side = formData.get('side') as string
   const relationship = formData.get('relationship') as string
@@ -41,7 +58,7 @@ async function addPerson(formData: FormData) {
   const isDivorced = formData.get('isDivorced') === 'on'
 
   if (!fullName) {
-    redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+    redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}${flowSuffix(flow)}`)
   }
 
   await prisma.person.create({
@@ -55,12 +72,13 @@ async function addPerson(formData: FormData) {
     },
   })
 
-  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}${flowSuffix(flow)}`)
 }
 
 async function generateAndReview(formData: FormData) {
   'use server'
   const weddingId = formData.get('weddingId') as string
+  const flow = formData.get('flow') as string | null
 
   const wedding = await prisma.wedding.findUnique({
     where: { id: weddingId },
@@ -134,16 +152,17 @@ async function generateAndReview(formData: FormData) {
     }
   }
 
-  redirect(`/weddings/${weddingId}/couple-form?step=photo-review`)
+  redirect(`/weddings/${weddingId}/couple-form?step=photo-review${flowSuffix(flow)}`)
 }
 
 async function removeGroup(formData: FormData) {
   'use server'
   const groupId = formData.get('groupId') as string
   const weddingId = formData.get('weddingId') as string
+  const flow = formData.get('flow') as string | null
 
   await prisma.photoGroup.delete({ where: { id: groupId } })
-  redirect(`/weddings/${weddingId}/couple-form?step=photo-review`)
+  redirect(`/weddings/${weddingId}/couple-form?step=photo-review${flowSuffix(flow)}`)
 }
 
 async function removePerson(formData: FormData) {
@@ -151,9 +170,10 @@ async function removePerson(formData: FormData) {
   const personId = formData.get('personId') as string
   const weddingId = formData.get('weddingId') as string
   const currentStep = (formData.get('currentStep') as string) || 'intro'
+  const flow = formData.get('flow') as string | null
 
   await prisma.person.delete({ where: { id: personId } })
-  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}${flowSuffix(flow)}`)
 }
 
 async function updatePersonName(formData: FormData) {
@@ -161,12 +181,13 @@ async function updatePersonName(formData: FormData) {
   const personId = formData.get('personId') as string
   const weddingId = formData.get('weddingId') as string
   const currentStep = (formData.get('currentStep') as string) || 'intro'
+  const flow = formData.get('flow') as string | null
   const fullName = (formData.get('fullName') as string)?.trim()
 
   if (fullName) {
     await prisma.person.update({ where: { id: personId }, data: { fullName } })
   }
-  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}${flowSuffix(flow)}`)
 }
 
 // ─── Shared components ───────────────────────────────────────────────────────
@@ -219,6 +240,7 @@ function PersonBadge({
   weddingId,
   currentStep,
   editingId,
+  flow,
   accentInitialBg = 'bg-rose-100',
   accentInitialText = 'text-rose-600',
 }: {
@@ -226,10 +248,12 @@ function PersonBadge({
   weddingId: string
   currentStep: StepId
   editingId?: string
+  flow?: string
   accentInitialBg?: string
   accentInitialText?: string
 }) {
   const isEditing = editingId === person.id
+  const fs = flow ? `&flow=${flow}` : ''
 
   if (isEditing) {
     return (
@@ -237,6 +261,7 @@ function PersonBadge({
         <input type="hidden" name="personId" value={person.id} />
         <input type="hidden" name="weddingId" value={weddingId} />
         <input type="hidden" name="currentStep" value={currentStep} />
+        {flow && <input type="hidden" name="flow" value={flow} />}
         <div className={`w-8 h-8 rounded-full ${accentInitialBg} flex items-center justify-center ${accentInitialText} font-semibold text-sm flex-shrink-0`}>
           {person.fullName.charAt(0).toUpperCase()}
         </div>
@@ -251,7 +276,7 @@ function PersonBadge({
           Save
         </button>
         <Link
-          href={`/weddings/${weddingId}/couple-form?step=${currentStep}`}
+          href={`/weddings/${weddingId}/couple-form?step=${currentStep}${fs}`}
           className="text-xs text-neutral-400 hover:text-neutral-600 px-2 py-1 rounded flex-shrink-0"
         >
           Cancel
@@ -274,7 +299,7 @@ function PersonBadge({
       )}
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
         <Link
-          href={`/weddings/${weddingId}/couple-form?step=${currentStep}&editing=${person.id}`}
+          href={`/weddings/${weddingId}/couple-form?step=${currentStep}&editing=${person.id}${fs}`}
           className="text-xs text-neutral-400 hover:text-neutral-700 px-2 py-1 rounded transition-colors"
         >
           Edit
@@ -283,6 +308,7 @@ function PersonBadge({
           <input type="hidden" name="personId" value={person.id} />
           <input type="hidden" name="weddingId" value={weddingId} />
           <input type="hidden" name="currentStep" value={currentStep} />
+          {flow && <input type="hidden" name="flow" value={flow} />}
           <button type="submit" className="text-xs text-neutral-400 hover:text-red-500 px-2 py-1 rounded transition-colors">
             Remove
           </button>
@@ -297,17 +323,20 @@ function StepNav({
   prev,
   next,
   nextLabel = 'Next →',
+  flow,
 }: {
   weddingId: string
   prev: StepId | null
   next: StepId | null
   nextLabel?: string
+  flow?: string
 }) {
+  const fs = flow ? `&flow=${flow}` : ''
   return (
     <div className="flex items-center justify-between mt-8 pt-6 border-t border-neutral-100">
       <div>
         {prev && (
-          <Link href={`/weddings/${weddingId}/couple-form?step=${prev}`} className="text-sm text-neutral-500 hover:text-neutral-700 flex items-center gap-1">
+          <Link href={`/weddings/${weddingId}/couple-form?step=${prev}${fs}`} className="text-sm text-neutral-500 hover:text-neutral-700 flex items-center gap-1">
             ← Back
           </Link>
         )}
@@ -315,11 +344,11 @@ function StepNav({
       <div className="flex items-center gap-3">
         {next && (
           <>
-            <Link href={`/weddings/${weddingId}/couple-form?step=${next}`} className="text-sm text-neutral-500 hover:text-neutral-700">
+            <Link href={`/weddings/${weddingId}/couple-form?step=${next}${fs}`} className="text-sm text-neutral-500 hover:text-neutral-700">
               Skip this step
             </Link>
             <Link
-              href={`/weddings/${weddingId}/couple-form?step=${next}`}
+              href={`/weddings/${weddingId}/couple-form?step=${next}${fs}`}
               className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-xl font-medium text-sm transition-colors shadow-sm"
             >
               {nextLabel}
@@ -343,6 +372,7 @@ function ParentStep({
   nextLabel,
   weddingId,
   editingId,
+  flow,
   accentBg,
   accentBorder,
   accentFocus,
@@ -362,6 +392,7 @@ function ParentStep({
   nextLabel: string
   weddingId: string
   editingId: string | undefined
+  flow?: string
   accentBg: string
   accentBorder: string
   accentFocus: string
@@ -380,7 +411,7 @@ function ParentStep({
     return (
       <div className="space-y-1">
         <label className="block text-sm font-medium text-neutral-700 mb-1.5">{person.relationship}'s full name</label>
-        <PersonBadge person={person} weddingId={weddingId} currentStep={currentStep} editingId={editingId} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
+        <PersonBadge person={person} weddingId={weddingId} currentStep={currentStep} editingId={editingId} flow={flow} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
       </div>
     )
   }
@@ -403,6 +434,7 @@ function ParentStep({
             <input type="hidden" name="currentStep" value={currentStep} />
             <input type="hidden" name="side" value={side} />
             <input type="hidden" name="relationship" value="Mom" />
+            {flow && <input type="hidden" name="flow" value={flow} />}
             <div className="flex-1">
               <label className="block text-sm font-medium text-neutral-700 mb-1.5">Mom's full name</label>
               <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Patricia Smith" />
@@ -420,6 +452,7 @@ function ParentStep({
             <input type="hidden" name="currentStep" value={currentStep} />
             <input type="hidden" name="side" value={side} />
             <input type="hidden" name="relationship" value="Dad" />
+            {flow && <input type="hidden" name="flow" value={flow} />}
             <div className="flex gap-3 items-end">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-neutral-700 mb-1.5">Dad's full name</label>
@@ -443,7 +476,7 @@ function ParentStep({
           <div className="mt-4 space-y-3 pl-4 border-l-2 border-neutral-200">
             {/* Show already-added step parents */}
             {stepParents.map((p) => (
-              <PersonBadge key={p.id} person={p} weddingId={weddingId} currentStep={currentStep} editingId={editingId} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
+              <PersonBadge key={p.id} person={p} weddingId={weddingId} currentStep={currentStep} editingId={editingId} flow={flow} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
             ))}
             {/* Add more step parents */}
             {['Step Mom', 'Step Dad'].map((rel) => {
@@ -455,6 +488,7 @@ function ParentStep({
                   <input type="hidden" name="currentStep" value={currentStep} />
                   <input type="hidden" name="side" value={side} />
                   <input type="hidden" name="relationship" value={rel} />
+                  {flow && <input type="hidden" name="flow" value={flow} />}
                   <div className="flex-1">
                     <label className="block text-sm font-medium text-neutral-700 mb-1.5">{rel}'s name</label>
                     <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="Full name" />
@@ -467,7 +501,7 @@ function ParentStep({
         </details>
       </div>
 
-      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} />
+      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} flow={flow} />
     </div>
   )
 }
@@ -484,6 +518,7 @@ function FamilyStep({
   nextLabel,
   weddingId,
   editingId,
+  flow,
   heading,
   description,
   primaryRelationship,
@@ -509,6 +544,7 @@ function FamilyStep({
   nextLabel: string
   weddingId: string
   editingId: string | undefined
+  flow?: string
   heading: string
   description: string
   primaryRelationship: string
@@ -536,6 +572,7 @@ function FamilyStep({
         <form action={addPerson} className="flex gap-3 items-end">
           <input type="hidden" name="weddingId" value={weddingId} />
           <input type="hidden" name="currentStep" value={currentStep} />
+          {flow && <input type="hidden" name="flow" value={flow} />}
           <input type="hidden" name="side" value={side} />
           <input type="hidden" name="relationship" value={primaryRelationship} />
           <div className="flex-1">
@@ -551,6 +588,7 @@ function FamilyStep({
             <input type="hidden" name="currentStep" value={currentStep} />
             <input type="hidden" name="side" value={side} />
             <input type="hidden" name="relationship" value={secondaryRelationship} />
+            {flow && <input type="hidden" name="flow" value={flow} />}
             <div className="flex-1">
               <label className="block text-sm font-medium text-neutral-700 mb-1.5">
                 {secondaryRelationship} <span className="text-neutral-400 font-normal">(optional)</span>
@@ -573,6 +611,7 @@ function FamilyStep({
                 weddingId={weddingId}
                 currentStep={currentStep}
                 editingId={editingId}
+                flow={flow}
                 accentInitialBg={accentInitialBg}
                 accentInitialText={accentInitialText}
               />
@@ -581,7 +620,7 @@ function FamilyStep({
         </div>
       )}
 
-      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} />
+      <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} flow={flow} />
     </div>
   )
 }
@@ -592,7 +631,7 @@ export default async function CoupleFormPage({
   searchParams,
 }: {
   params: { id: string }
-  searchParams: { step?: string; editing?: string }
+  searchParams: { step?: string; editing?: string; flow?: string }
 }) {
   const wedding = await prisma.wedding.findUnique({
     where: { id: params.id },
@@ -613,7 +652,8 @@ export default async function CoupleFormPage({
     : 'intro'
 
   const editingId = searchParams.editing as string | undefined
-  const { prev, next } = getAdjacentSteps(currentStep)
+  const flow = searchParams.flow as string | undefined
+  const { prev, next } = getAdjacentSteps(currentStep, flow)
 
   const byCategory = (side: 'Bride' | 'Groom', ...rels: string[]) =>
     wedding.people.filter((p) => p.side === side && rels.includes(p.relationship))
@@ -723,7 +763,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="1 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Parents →`}
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             people={byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...brideStyles}
           />
@@ -736,7 +776,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="2 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Siblings →`}
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             people={byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...groomStyles}
           />
@@ -749,7 +789,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="3 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Siblings →`}
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${brideName}'s Siblings`}
             description={`Add ${brideName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -768,7 +808,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="4 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Grandparents →`}
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${groomName}'s Siblings`}
             description={`Add ${groomName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -787,7 +827,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="5 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Grandparents →`}
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${brideName}'s Grandparents`}
             description="Will any grandparents be there? Add them so we make sure they're included."
             primaryRelationship="Grandparent"
@@ -804,7 +844,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="6 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel="Next: Anyone Else? →"
-            weddingId={wedding.id} editingId={editingId}
+            weddingId={wedding.id} editingId={editingId} flow={flow}
             heading={`${groomName}'s Grandparents`}
             description={`Will any of ${groomName}'s grandparents be at the wedding?`}
             primaryRelationship="Grandparent"
@@ -839,6 +879,7 @@ export default async function CoupleFormPage({
                       <input type="hidden" name="weddingId" value={wedding.id} />
                       <input type="hidden" name="currentStep" value={currentStep} />
                       <input type="hidden" name="side" value={side} />
+                      {flow && <input type="hidden" name="flow" value={flow} />}
                       <input type="text" name="fullName" className={`w-full px-3 py-2.5 rounded-xl border border-neutral-200 ${focus} bg-white text-sm focus:outline-none focus:ring-2`} placeholder="Full name" />
                       <select name="relationship" required className={`w-full px-3 py-2.5 rounded-xl border border-neutral-200 ${focus} bg-white text-sm focus:outline-none focus:ring-2`}>
                         <option value="">Relationship...</option>
@@ -855,6 +896,7 @@ export default async function CoupleFormPage({
                             weddingId={wedding.id}
                             currentStep={currentStep}
                             editingId={editingId}
+                            flow={flow}
                             accentInitialBg={side === 'Bride' ? 'bg-rose-100' : 'bg-sky-100'}
                             accentInitialText={side === 'Bride' ? 'text-rose-600' : 'text-sky-600'}
                           />
@@ -866,9 +908,10 @@ export default async function CoupleFormPage({
               </div>
 
               <div className="flex items-center justify-between pt-6 border-t border-neutral-100">
-                <Link href={`/weddings/${wedding.id}/couple-form?step=${prev}`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
+                <Link href={`/weddings/${wedding.id}/couple-form?step=${prev}${flow ? `&flow=${flow}` : ''}`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
                 <form action={generateAndReview}>
                   <input type="hidden" name="weddingId" value={wedding.id} />
+                  {flow && <input type="hidden" name="flow" value={flow} />}
                   <button type="submit" className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors shadow-sm">
                     Build Our Photo List →
                   </button>
@@ -901,6 +944,7 @@ export default async function CoupleFormPage({
                 <form action={removeGroup}>
                   <input type="hidden" name="groupId" value={group.id} />
                   <input type="hidden" name="weddingId" value={wedding.id} />
+                  {flow && <input type="hidden" name="flow" value={flow} />}
                   <button type="submit" className="opacity-0 group-hover:opacity-100 text-xs text-neutral-400 hover:text-red-500 transition-all px-2 py-1 rounded flex-shrink-0 mt-0.5">
                     Remove
                   </button>
@@ -947,8 +991,8 @@ export default async function CoupleFormPage({
               </div>
 
               <div className="flex items-center justify-between">
-                <Link href={`/weddings/${wedding.id}/couple-form?step=extras`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
-                <Link href={`/weddings/${wedding.id}/couple-form?step=done`} className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors shadow-sm">
+                <Link href={`/weddings/${wedding.id}/couple-form?step=extras${flow ? `&flow=${flow}` : ''}`} className="text-sm text-neutral-500 hover:text-neutral-700">← Back</Link>
+                <Link href={`/weddings/${wedding.id}/couple-form?step=done${flow ? `&flow=${flow}` : ''}`} className="inline-flex items-center gap-2 bg-rose-500 hover:bg-rose-600 text-white px-6 py-3 rounded-xl font-semibold transition-colors shadow-sm">
                   Looks Great! →
                 </Link>
               </div>
@@ -1017,7 +1061,7 @@ export default async function CoupleFormPage({
                 <p className="text-sm text-neutral-500">Questions? Don't hesitate to reach out to your photographer directly.</p>
               </div>
 
-              <Link href={`/weddings/${wedding.id}/couple-form?step=photo-review`} className="text-sm text-neutral-500 hover:text-neutral-700">
+              <Link href={`/weddings/${wedding.id}/couple-form?step=photo-review${flow ? `&flow=${flow}` : ''}`} className="text-sm text-neutral-500 hover:text-neutral-700">
                 ← Review photo list
               </Link>
             </div>
