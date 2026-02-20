@@ -148,6 +148,29 @@ async function removeGroup(formData: FormData) {
   redirect(`/weddings/${weddingId}/couple-form?step=photo-review`)
 }
 
+async function removePerson(formData: FormData) {
+  'use server'
+  const personId = formData.get('personId') as string
+  const weddingId = formData.get('weddingId') as string
+  const currentStep = (formData.get('currentStep') as string) || 'intro'
+
+  await prisma.person.delete({ where: { id: personId } })
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+}
+
+async function updatePersonName(formData: FormData) {
+  'use server'
+  const personId = formData.get('personId') as string
+  const weddingId = formData.get('weddingId') as string
+  const currentStep = (formData.get('currentStep') as string) || 'intro'
+  const fullName = (formData.get('fullName') as string)?.trim()
+
+  if (fullName) {
+    await prisma.person.update({ where: { id: personId }, data: { fullName } })
+  }
+  redirect(`/weddings/${weddingId}/couple-form?step=${currentStep}`)
+}
+
 // ─── Shared components ───────────────────────────────────────────────────────
 
 function ProgressDots({
@@ -236,19 +259,80 @@ function AddedConfirmation({
   )
 }
 
-function PersonBadge({ name, relationship, isDivorced }: { name: string; relationship: string; isDivorced?: boolean }) {
+function PersonBadge({
+  person,
+  weddingId,
+  currentStep,
+  editingId,
+  accentInitialBg = 'bg-rose-100',
+  accentInitialText = 'text-rose-600',
+}: {
+  person: { id: string; fullName: string; relationship: string; isDivorced?: boolean }
+  weddingId: string
+  currentStep: StepId
+  editingId?: string
+  accentInitialBg?: string
+  accentInitialText?: string
+}) {
+  const isEditing = editingId === person.id
+
+  if (isEditing) {
+    return (
+      <form action={updatePersonName} className="flex gap-2 items-center bg-white rounded-xl border-2 border-rose-300 px-3 py-2 shadow-sm">
+        <input type="hidden" name="personId" value={person.id} />
+        <input type="hidden" name="weddingId" value={weddingId} />
+        <input type="hidden" name="currentStep" value={currentStep} />
+        <div className={`w-8 h-8 rounded-full ${accentInitialBg} flex items-center justify-center ${accentInitialText} font-semibold text-sm flex-shrink-0`}>
+          {person.fullName.charAt(0).toUpperCase()}
+        </div>
+        <input
+          type="text"
+          name="fullName"
+          defaultValue={person.fullName}
+          className="flex-1 text-sm bg-transparent border-none outline-none focus:outline-none min-w-0"
+          autoFocus
+        />
+        <button type="submit" className="text-xs bg-rose-500 text-white px-3 py-1.5 rounded-lg font-medium flex-shrink-0 hover:bg-rose-600 transition-colors">
+          Save
+        </button>
+        <Link
+          href={`/weddings/${weddingId}/couple-form?step=${currentStep}`}
+          className="text-xs text-neutral-400 hover:text-neutral-600 px-2 py-1 rounded flex-shrink-0"
+        >
+          Cancel
+        </Link>
+      </form>
+    )
+  }
+
   return (
-    <div className="flex items-center gap-3 py-2.5 px-4 bg-white rounded-xl border border-neutral-200 shadow-sm">
-      <div className="w-8 h-8 rounded-full bg-rose-100 flex items-center justify-center text-rose-600 font-semibold text-sm flex-shrink-0">
-        {name.charAt(0).toUpperCase()}
+    <div className="flex items-center gap-3 py-2.5 px-4 bg-white rounded-xl border border-neutral-200 shadow-sm group">
+      <div className={`w-8 h-8 rounded-full ${accentInitialBg} flex items-center justify-center ${accentInitialText} font-semibold text-sm flex-shrink-0`}>
+        {person.fullName.charAt(0).toUpperCase()}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="font-medium text-neutral-900 text-sm leading-tight">{name}</p>
-        <p className="text-xs text-neutral-500 leading-tight">{relationship}</p>
+        <p className="font-medium text-neutral-900 text-sm leading-tight">{person.fullName}</p>
+        <p className="text-xs text-neutral-500 leading-tight">{person.relationship}</p>
       </div>
-      {isDivorced && (
+      {person.isDivorced && (
         <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full flex-shrink-0">Divorced</span>
       )}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <Link
+          href={`/weddings/${weddingId}/couple-form?step=${currentStep}&editing=${person.id}`}
+          className="text-xs text-neutral-400 hover:text-neutral-700 px-2 py-1 rounded transition-colors"
+        >
+          Edit
+        </Link>
+        <form action={removePerson}>
+          <input type="hidden" name="personId" value={person.id} />
+          <input type="hidden" name="weddingId" value={weddingId} />
+          <input type="hidden" name="currentStep" value={currentStep} />
+          <button type="submit" className="text-xs text-neutral-400 hover:text-red-500 px-2 py-1 rounded transition-colors">
+            Remove
+          </button>
+        </form>
+      </div>
     </div>
   )
 }
@@ -296,7 +380,6 @@ function StepNav({
 function ParentStep({
   side,
   sideName,
-  otherName,
   stepLabel,
   stepNum,
   currentStep,
@@ -305,16 +388,18 @@ function ParentStep({
   nextLabel,
   weddingId,
   added,
+  editingId,
   accentBg,
   accentBorder,
   accentFocus,
   accentBtn,
   accentText,
+  accentInitialBg,
+  accentInitialText,
   people,
 }: {
   side: 'Bride' | 'Groom'
   sideName: string
-  otherName: string
   stepLabel: string
   stepNum: string
   currentStep: StepId
@@ -323,15 +408,32 @@ function ParentStep({
   nextLabel: string
   weddingId: string
   added: string | undefined
+  editingId: string | undefined
   accentBg: string
   accentBorder: string
   accentFocus: string
   accentBtn: string
   accentText: string
+  accentInitialBg: string
+  accentInitialText: string
   people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
 }) {
   if (added) {
     return <AddedConfirmation name={added} currentStep={currentStep} nextStep={next} weddingId={weddingId} accentClass={`${accentBg} ${accentText}`} />
+  }
+
+  const existingMom = people.find((p) => p.relationship === 'Mom')
+  const existingDad = people.find((p) => p.relationship === 'Dad')
+  const stepParents = people.filter((p) => p.relationship === 'Step Mom' || p.relationship === 'Step Dad')
+
+  // An "added" tile replaces the input row for mom/dad
+  function DoneTile({ person }: { person: { id: string; fullName: string; relationship: string; isDivorced: boolean } }) {
+    return (
+      <div className="space-y-1">
+        <label className="block text-sm font-medium text-neutral-700 mb-1.5">{person.relationship}'s full name</label>
+        <PersonBadge person={person} weddingId={weddingId} currentStep={currentStep} editingId={editingId} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
+      </div>
+    )
   }
 
   return (
@@ -343,70 +445,78 @@ function ParentStep({
       </div>
 
       <div className={`${accentBg} ${accentBorder} border rounded-2xl p-6 space-y-5`}>
-        {/* Mom */}
-        <form action={addPerson} className="flex gap-3 items-end">
-          <input type="hidden" name="weddingId" value={weddingId} />
-          <input type="hidden" name="currentStep" value={currentStep} />
-          <input type="hidden" name="side" value={side} />
-          <input type="hidden" name="relationship" value="Mom" />
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-neutral-700 mb-1.5">Mom's full name</label>
-            <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Patricia Smith" />
-          </div>
-          <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}>Add</button>
-        </form>
-
-        {/* Dad */}
-        <form action={addPerson} className="space-y-2">
-          <input type="hidden" name="weddingId" value={weddingId} />
-          <input type="hidden" name="currentStep" value={currentStep} />
-          <input type="hidden" name="side" value={side} />
-          <input type="hidden" name="relationship" value="Dad" />
-          <div className="flex gap-3 items-end">
+        {/* Mom — show done tile if already added, otherwise show input */}
+        {existingMom ? (
+          <DoneTile person={existingMom} />
+        ) : (
+          <form action={addPerson} className="flex gap-3 items-end">
+            <input type="hidden" name="weddingId" value={weddingId} />
+            <input type="hidden" name="currentStep" value={currentStep} />
+            <input type="hidden" name="side" value={side} />
+            <input type="hidden" name="relationship" value="Mom" />
             <div className="flex-1">
-              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Dad's full name</label>
-              <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Robert Smith" />
+              <label className="block text-sm font-medium text-neutral-700 mb-1.5">Mom's full name</label>
+              <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Patricia Smith" />
             </div>
             <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}>Add</button>
-          </div>
-          <label className="flex items-center gap-2 text-sm text-neutral-600 pl-1">
-            <input type="checkbox" name="isDivorced" className="w-4 h-4 rounded" />
-            Parents are divorced (we'll plan separate shots)
-          </label>
-        </form>
+          </form>
+        )}
+
+        {/* Dad — show done tile if already added, otherwise show input */}
+        {existingDad ? (
+          <DoneTile person={existingDad} />
+        ) : (
+          <form action={addPerson} className="space-y-2">
+            <input type="hidden" name="weddingId" value={weddingId} />
+            <input type="hidden" name="currentStep" value={currentStep} />
+            <input type="hidden" name="side" value={side} />
+            <input type="hidden" name="relationship" value="Dad" />
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="block text-sm font-medium text-neutral-700 mb-1.5">Dad's full name</label>
+                <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="e.g. Robert Smith" />
+              </div>
+              <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm transition-colors flex-shrink-0`}>Add</button>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-neutral-600 pl-1">
+              <input type="checkbox" name="isDivorced" className="w-4 h-4 rounded" />
+              Parents are divorced (we'll plan separate shots)
+            </label>
+          </form>
+        )}
 
         {/* Step parents */}
-        <details className="group">
+        <details className="group" open={stepParents.length > 0}>
           <summary className="text-sm font-medium text-neutral-600 cursor-pointer hover:text-neutral-900 list-none flex items-center gap-1.5 select-none">
             <span className={`${accentText} group-open:rotate-90 transition-transform inline-block`}>▶</span>
-            Add a step-parent
+            {stepParents.length > 0 ? `Step-parents (${stepParents.length} added)` : 'Add a step-parent'}
           </summary>
-          <div className="mt-4 space-y-4 pl-4 border-l-2 border-neutral-200">
-            {['Step Mom', 'Step Dad'].map((rel) => (
-              <form key={rel} action={addPerson} className="flex gap-3 items-end">
-                <input type="hidden" name="weddingId" value={weddingId} />
-                <input type="hidden" name="currentStep" value={currentStep} />
-                <input type="hidden" name="side" value={side} />
-                <input type="hidden" name="relationship" value={rel} />
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-neutral-700 mb-1.5">{rel}'s name</label>
-                  <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="Full name" />
-                </div>
-                <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
-              </form>
+          <div className="mt-4 space-y-3 pl-4 border-l-2 border-neutral-200">
+            {/* Show already-added step parents */}
+            {stepParents.map((p) => (
+              <PersonBadge key={p.id} person={p} weddingId={weddingId} currentStep={currentStep} editingId={editingId} accentInitialBg={accentInitialBg} accentInitialText={accentInitialText} />
             ))}
+            {/* Add more step parents */}
+            {['Step Mom', 'Step Dad'].map((rel) => {
+              const alreadyAdded = people.find((p) => p.relationship === rel)
+              if (alreadyAdded) return null
+              return (
+                <form key={rel} action={addPerson} className="flex gap-3 items-end">
+                  <input type="hidden" name="weddingId" value={weddingId} />
+                  <input type="hidden" name="currentStep" value={currentStep} />
+                  <input type="hidden" name="side" value={side} />
+                  <input type="hidden" name="relationship" value={rel} />
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-neutral-700 mb-1.5">{rel}'s name</label>
+                    <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder="Full name" />
+                  </div>
+                  <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
+                </form>
+              )
+            })}
           </div>
         </details>
       </div>
-
-      {people.length > 0 && (
-        <div className="mt-6">
-          <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
-          <div className="space-y-2">
-            {people.map((p) => <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} isDivorced={p.isDivorced} />)}
-          </div>
-        </div>
-      )}
 
       <StepNav weddingId={weddingId} prev={prev} next={next} nextLabel={nextLabel} />
     </div>
@@ -425,6 +535,7 @@ function FamilyStep({
   nextLabel,
   weddingId,
   added,
+  editingId,
   heading,
   description,
   primaryRelationship,
@@ -436,6 +547,8 @@ function FamilyStep({
   accentFocus,
   accentBtn,
   accentText,
+  accentInitialBg,
+  accentInitialText,
   people,
 }: {
   side: 'Bride' | 'Groom'
@@ -448,6 +561,7 @@ function FamilyStep({
   nextLabel: string
   weddingId: string
   added: string | undefined
+  editingId: string | undefined
   heading: string
   description: string
   primaryRelationship: string
@@ -459,6 +573,8 @@ function FamilyStep({
   accentFocus: string
   accentBtn: string
   accentText: string
+  accentInitialBg: string
+  accentInitialText: string
   people: { id: string; fullName: string; relationship: string; isDivorced: boolean }[]
 }) {
   if (added) {
@@ -480,7 +596,7 @@ function FamilyStep({
           <input type="hidden" name="side" value={side} />
           <input type="hidden" name="relationship" value={primaryRelationship} />
           <div className="flex-1">
-            <label className="block text-sm font-medium text-neutral-700 mb-1.5">{primaryRelationship}'s full name</label>
+            <label className="block text-sm font-medium text-neutral-700 mb-1.5">Full name</label>
             <input type="text" name="fullName" className={`w-full px-4 py-3 rounded-xl border border-neutral-200 ${accentFocus} bg-white text-base focus:outline-none focus:ring-2`} placeholder={primaryPlaceholder} />
           </div>
           <button type="submit" className={`${accentBtn} text-white px-4 py-3 rounded-xl font-medium text-sm flex-shrink-0`}>Add</button>
@@ -507,7 +623,17 @@ function FamilyStep({
         <div className="mt-6">
           <p className="text-sm font-medium text-neutral-500 mb-3">Added so far:</p>
           <div className="space-y-2">
-            {people.map((p) => <PersonBadge key={p.id} name={p.fullName} relationship={p.relationship} />)}
+            {people.map((p) => (
+              <PersonBadge
+                key={p.id}
+                person={p}
+                weddingId={weddingId}
+                currentStep={currentStep}
+                editingId={editingId}
+                accentInitialBg={accentInitialBg}
+                accentInitialText={accentInitialText}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -523,7 +649,7 @@ export default async function CoupleFormPage({
   searchParams,
 }: {
   params: { id: string }
-  searchParams: { step?: string; added?: string }
+  searchParams: { step?: string; added?: string; editing?: string }
 }) {
   const wedding = await prisma.wedding.findUnique({
     where: { id: params.id },
@@ -544,6 +670,7 @@ export default async function CoupleFormPage({
     : 'intro'
 
   const added = searchParams.added as string | undefined
+  const editingId = searchParams.editing as string | undefined
   const { prev, next } = getAdjacentSteps(currentStep)
 
   const byCategory = (side: 'Bride' | 'Groom', ...rels: string[]) =>
@@ -558,6 +685,8 @@ export default async function CoupleFormPage({
     accentFocus: 'focus:ring-rose-400',
     accentBtn: 'bg-rose-500 hover:bg-rose-600',
     accentText: 'text-rose-600',
+    accentInitialBg: 'bg-rose-100',
+    accentInitialText: 'text-rose-600',
   }
   const groomStyles = {
     accentBg: 'bg-sky-50',
@@ -565,6 +694,8 @@ export default async function CoupleFormPage({
     accentFocus: 'focus:ring-sky-400',
     accentBtn: 'bg-sky-600 hover:bg-sky-700',
     accentText: 'text-sky-600',
+    accentInitialBg: 'bg-sky-100',
+    accentInitialText: 'text-sky-600',
   }
 
   return (
@@ -614,11 +745,11 @@ export default async function CoupleFormPage({
         {/* ── BRIDE PARENTS ─────────────────────────────────────────────── */}
         {currentStep === 'bride-parents' && (
           <ParentStep
-            side="Bride" sideName={brideName} otherName={groomName}
+            side="Bride" sideName={brideName}
             stepLabel={`${brideName}'s Family`} stepNum="1 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Parents →`}
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             people={byCategory('Bride', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...brideStyles}
           />
@@ -627,11 +758,11 @@ export default async function CoupleFormPage({
         {/* ── GROOM PARENTS ─────────────────────────────────────────────── */}
         {currentStep === 'groom-parents' && (
           <ParentStep
-            side="Groom" sideName={groomName} otherName={brideName}
+            side="Groom" sideName={groomName}
             stepLabel={`${groomName}'s Family`} stepNum="2 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Siblings →`}
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             people={byCategory('Groom', 'Mom', 'Dad', 'Step Mom', 'Step Dad')}
             {...groomStyles}
           />
@@ -644,7 +775,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="3 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Siblings →`}
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             heading={`${brideName}'s Siblings`}
             description={`Add ${brideName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -663,7 +794,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="4 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${brideName}'s Grandparents →`}
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             heading={`${groomName}'s Siblings`}
             description={`Add ${groomName}'s brothers and sisters, and their partners if they'll be in photos.`}
             primaryRelationship="Sibling"
@@ -682,7 +813,7 @@ export default async function CoupleFormPage({
             stepLabel={`${brideName}'s Family`} stepNum="5 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel={`Next: ${groomName}'s Grandparents →`}
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             heading={`${brideName}'s Grandparents`}
             description="Will any grandparents be there? Add them so we make sure they're included."
             primaryRelationship="Grandparent"
@@ -699,7 +830,7 @@ export default async function CoupleFormPage({
             stepLabel={`${groomName}'s Family`} stepNum="6 of 7"
             currentStep={currentStep} prev={prev} next={next}
             nextLabel="Next: Anyone Else? →"
-            weddingId={wedding.id} added={added}
+            weddingId={wedding.id} added={added} editingId={editingId}
             heading={`${groomName}'s Grandparents`}
             description={`Will any of ${groomName}'s grandparents be at the wedding?`}
             primaryRelationship="Grandparent"
@@ -746,12 +877,17 @@ export default async function CoupleFormPage({
                       <button type="submit" className={`w-full ${btn} text-white py-2.5 rounded-xl text-sm font-medium transition-colors`}>+ Add to {side === 'Bride' ? brideName : groomName}'s side</button>
                     </form>
                     {people.length > 0 && (
-                      <div className="mt-4 space-y-1.5">
+                      <div className="mt-4 space-y-2">
                         {people.map((p) => (
-                          <div key={p.id} className="text-xs text-neutral-700 bg-white rounded-lg px-3 py-2 border border-neutral-100">
-                            <span className="font-medium">{p.fullName}</span>
-                            <span className="text-neutral-400 ml-1">· {p.relationship}</span>
-                          </div>
+                          <PersonBadge
+                            key={p.id}
+                            person={p}
+                            weddingId={wedding.id}
+                            currentStep={currentStep}
+                            editingId={editingId}
+                            accentInitialBg={side === 'Bride' ? 'bg-rose-100' : 'bg-sky-100'}
+                            accentInitialText={side === 'Bride' ? 'text-rose-600' : 'text-sky-600'}
+                          />
                         ))}
                       </div>
                     )}
